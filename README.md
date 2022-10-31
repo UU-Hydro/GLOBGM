@@ -1,1 +1,6 @@
 # GLOBGM
+
+
+## How to install
+
+
