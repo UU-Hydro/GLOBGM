@@ -1,3 +1,4 @@
+![](logo.png)
 # GLOBGM
 
 The GLOBGM is the PCR-*GLOB*WB MODFLOW global-scale MODFLOW *G*roundwater *M*odel at 30 arcsec (~ 1km at the equator) spatial resolution. The current version 1.0 uses a distributed memory parallel prototype of MODFLOW 6, developed together with the USGS (https://github.com/verkaik/modflow6-parallel.git, https://doi.org/10.5281/zenodo.5778658).
