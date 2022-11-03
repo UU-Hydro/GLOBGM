@@ -1,0 +1,15 @@
+43200 21600 2 -180 -90 8.333333333333E-003 4
+19580101
+{yoda_input}/clonemap_15deg/tile_163.txt
+dum.txt
+{globgm_dir}/input_map/transient/tile_???-163/steady-state_only/maps/top_uppermost_layer.map
+8
+./glob_metis_224-96-32-32_tr_1958-2015/ s 1 .tr.hds 8 1 2 195801 201512 flt ./ iqr.tr. 1958
+./glob_metis_224-96-32-32_tr_1958-2015/ s 2 .tr.hds 8 1 2 195801 201512 flt ./ iqr.tr. 1958
+./glob_metis_224-96-32-32_tr_1958-2015/ s 3 .tr.hds 8 1 2 195801 201512 flt ./ iqr.tr. 1958
+./glob_metis_224-96-32-32_tr_1958-2015/ s 4 .tr.hds 8 1 2 195801 201512 flt ./ iqr.tr. 1958
+./glob_metis_224-96-32-32_tr_1958-2015/ s 1 .tr.hds 4 1 2 195801 201512 flt ./ slp.tr. 1958
+./glob_metis_224-96-32-32_tr_1958-2015/ s 2 .tr.hds 4 1 2 195801 201512 flt ./ slp.tr. 1958
+./glob_metis_224-96-32-32_tr_1958-2015/ s 3 .tr.hds 4 1 2 195801 201512 flt ./ slp.tr. 1958
+./glob_metis_224-96-32-32_tr_1958-2015/ s 4 .tr.hds 4 1 2 195801 201512 flt ./ slp.tr. 1958
+

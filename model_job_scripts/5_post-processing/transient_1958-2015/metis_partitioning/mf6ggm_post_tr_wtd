@@ -1,0 +1,21 @@
+#!/bin/bash
+#SBATCH --partition=thin
+#SBATCH --exclusive
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=24:00:00
+#SBATCH --output=mf6ggm_post_tr_wtd_%j.out
+#SBATCH --error=mf6ggm_post_tr_wtd_%j.err
+
+# load modules
+module load 2021
+module load intel/2021a
+
+inpdir={git_dir}/model_input/5_post-processing/transient_1958-2015/
+exe={bin_dir}/mf6ggmpost
+inp=mf6ggm_glob_post_tr_wtd.inp
+moddir={globgm_dir}/mf6_mod/
+
+cp ${inpdir}${inp} ${moddir}
+cd ${moddir}
+${exe} ${inp}
