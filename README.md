@@ -9,9 +9,9 @@ GLOBGM main reference/paper: Verkaik, J., Sutanudjaja, E. H., Oude Essink, G.H.P
 PCR-GLOBWB main reference/paper: Sutanudjaja, E. H., van Beek, R., Wanders, N., Wada, Y., Bosmans, J. H. C., Drost, N., van der Ent, R. J., de Graaf, I. E. M., Hoch, J. M., de Jong, K., Karssenberg, D., López López, P., Peßenteiner, S., Schmitz, O., Straatsma, M. W., Vannametee, E., Wisser, D., and Bierkens, M. F. P.: PCR-GLOBWB 2: a 5 arcmin global hydrological and water resources model, Geosci. Model Dev., 11, 2429-2453, https://doi.org/10.5194/gmd-11-2429-2018, 2018.
 
 
-## Input and output files (including Yoda access)
+## Input and output data files (including Yoda access)
 
-The main GLOBGM input and output files are available through the Yoda research data management service (https://www.uu.nl/en/research/yoda):
+The main GLOBGM input and output data files are available through the Yoda research data management service (https://www.uu.nl/en/research/yoda):
 
 - URL: https://geo.data.uu.nl/research-globgm/
 - Username: globgm.user@gmail.com
@@ -19,17 +19,30 @@ The main GLOBGM input and output files are available through the Yoda research d
 
 Note that among the available raster files provided by Yoda, there are files with the IDF (iMOD Data File) extension. These binary files can be viewed and processed using iMOD (https://oss.deltares.nl/web/imod/download-imod5).
 
+
 ## How to install
 
-For the 'Write Tiled Parameter Data' pre-processing, PCR-Raster Python should be installed, see steps 1-3 in 'How to install' section at GitHub repository https://github.com/UU-Hydro/PCR-GLOBWB_model and https://pcraster.geo.uu.nl/. For this pre-processing, the modified PCR-GLOBWB Python model files are located in ./model_tools_src/python/pcr-globwb.
+For the 'Write Tiled Parameter Data' pre-processing, PCR-Raster Python should be installed, see steps 1-3 in 'How to install' section at GitHub repository https://github.com/UU-Hydro/PCR-GLOBWB_model and https://pcraster.geo.uu.nl/. For this pre-processing, the modified PCR-GLOBWB Python model files are located in [model_tools_src/python/pcr-globwb/](model_tools_src/python/pcr-globwb/).
 
-The GLOBGM pre-processing stept 'Prepare Model Partitioning' and 'Partition and Write Model Input' require the Fortran compilation of the tools located in ./model_tools_src/fortran, repectively. Note that for some of these tools (i.e. *catchcreatemetis*, *mf6ggm*) the code should be linked with the METIS library (http://glaros.dtc.umn.edu/gkhome/metis/metis/download). For this, METIS should be compiled at 64-bit precision (see ./model_tools_src/c/metis/metis.h). 
+The GLOBGM pre-processing stept 'Prepare Model Partitioning' and 'Partition and Write Model Input' require the Fortran compilation of the tools located in [./model_tools_src/fortran/](model_tools_src/fortran/), repectively. Note that for some of these tools (i.e. *catchcreatemetis*, *mf6ggm*) the code should be linked with the METIS library (http://glaros.dtc.umn.edu/gkhome/metis/metis/download). For this, METIS should be compiled at 64-bit precision (see ./model_tools_src/c/metis/metis.h). 
 
 Furthermore, for running the model ('Run Model') the MODFLOW 6 computational kernel (https://github.com/verkaik/modflow6-parallel.git, https://doi.org/10.5281/zenodo.5778658) should be compiled with a Fortran compiler and linked with the Message Passing Interface library (see e.g. the template ./model_tools_src/fortran/modflow6/makefile).
 
 ## How to run
 
-Template job scripts are given in ./model_job_scripts/, corresponding to steps of the workflow as mentioned in Section 2.3 of the GLOBGM paper (Verkaik et al, 2022).
+The model input files for the tools can be found in ./model_input, and template job scripts are given in ./model_job_scripts/. The folder structure corresponds to the steps of the workflow as mentioned in Section 2.3 of the GLOBGM paper (Verkaik et al., 2022). In the input files we use the following variables/names that should be set accordingly:
+
+- *{yoda_input}*: Yoda location https://geo.data.uu.nl/research-globgm/input/version_1.0/
+- *{yoda_output}*: Yoda location https://geo.data.uu.nl/research-globgm/output/version_1.0/
+- *{bin_dir}*: directory with all compiled Fortran programs
+- *{git_dir}*: root directory of this GitHub repository 
+- *{map_dir}*: directory tiled parameter data as a result of 'Write Tiled Parameter Data' pre-processing
+- *{globgm_dir}*: root model directory of the GLOBGM 
+
+For post-processing, two main tools are provided:
+
+- mf6ggmpost: Fortran tool to read GLOBGM results from MODFLOW and write heads or watertable depths, aggegrated data such as head decline slope, and sampled time series 
+- analyze_gw_head: R-script used for evaluating the transient GLOBGM results for the CONUS using NWIS observation wells (see Verkaik et al., Section 3.3). See ./model_evaluation for the input and output.
 
 ## Disclaimer
 
