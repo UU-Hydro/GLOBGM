@@ -1,6 +1,6 @@
 43200 21600 2 -180 -90 8.333333333333E-003 4
 19580101
-{yoda_input}/clonemap_15deg/tile_163.txt
+{yoda_input}/tile_163.txt
 dum.txt
 {globgm_dir}/input_map/transient/tile_???-163/steady-state_only/maps/top_uppermost_layer.map
 8
