@@ -25,13 +25,13 @@ Note that among the available raster files provided by Yoda, there are files wit
 
 For the 'Write Tiled Parameter Data' pre-processing, PCR-Raster Python should be installed, see steps 1-3 in 'How to install' section at GitHub repository https://github.com/UU-Hydro/PCR-GLOBWB_model and https://pcraster.geo.uu.nl/. For this pre-processing, the modified PCR-GLOBWB Python model files are located in [model_tools_src/python/pcr-globwb/](model_tools_src/python/pcr-globwb/).
 
-The GLOBGM pre-processing stept 'Prepare Model Partitioning' and 'Partition and Write Model Input' require the Fortran compilation of the tools located in [./model_tools_src/fortran/](model_tools_src/fortran/), repectively. Note that for some of these tools (i.e. *catchcreatemetis*, *mf6ggm*) the code should be linked with the METIS library (http://glaros.dtc.umn.edu/gkhome/metis/metis/download). For this, METIS should be compiled at 64-bit precision (see ./model_tools_src/c/metis/metis.h). 
+The GLOBGM pre-processing stept 'Prepare Model Partitioning' and 'Partition and Write Model Input' require the Fortran compilation of the tools located in [model_tools_src/fortran/](model_tools_src/fortran/), repectively. Note that for some of these tools (i.e. *catchcreatemetis*, *mf6ggm*) the code should be linked with the METIS library (http://glaros.dtc.umn.edu/gkhome/metis/metis/download). For this, METIS should be compiled at 64-bit precision (see ./model_tools_src/c/metis/metis.h). 
 
-Furthermore, for running the model ('Run Model') the MODFLOW 6 computational kernel (https://github.com/verkaik/modflow6-parallel.git, https://doi.org/10.5281/zenodo.5778658) should be compiled with a Fortran compiler and linked with the Message Passing Interface library (see e.g. the template ./model_tools_src/fortran/modflow6/makefile).
+Furthermore, for running the model ('Run Model') the MODFLOW 6 computational kernel (https://github.com/verkaik/modflow6-parallel.git, https://doi.org/10.5281/zenodo.5778658) should be compiled with a Fortran compiler and linked with the Message Passing Interface library (see e.g. the template [model_tools_src/fortran/modflow6/makefile](model_tools_src/fortran/modflow6/makefile)).
 
 ## How to run
 
-The model input files for the tools can be found in ./model_input, and template job scripts are given in ./model_job_scripts/. The folder structure corresponds to the steps of the workflow as mentioned in Section 2.3 of the GLOBGM paper (Verkaik et al., 2022). In the input files we use the following variables/names that should be set accordingly:
+The model input files for the tools can be found in ./model_input, and template job scripts are given in [model_job_scripts](model_job_scripts/). The folder structure corresponds to the steps of the workflow as mentioned in Section 2.3 of the GLOBGM paper (Verkaik et al., 2022). In the input files we use the following variables/names that should be set accordingly:
 
 - *{yoda_input}*: Yoda location https://geo.data.uu.nl/research-globgm/input/version_1.0/
 - *{yoda_output}*: Yoda location https://geo.data.uu.nl/research-globgm/output/version_1.0/
@@ -43,8 +43,8 @@ The model input files for the tools can be found in ./model_input, and template 
 For post-processing, two main tools are provided:
 
 - mf6ggmpost: Fortran tool to read GLOBGM results from MODFLOW and write heads or watertable depths, aggegrated data such as head decline slope, and sampled time series 
-- analyze_gw_head: R-script used for evaluating the transient GLOBGM results for the CONUS using NWIS observation wells (see Verkaik et al., Section 3.3). See ./model_evaluation for the input and output.
+- analyze_gw_head: R-script used for evaluating the transient GLOBGM results for the CONUS using NWIS observation wells (see Verkaik et al., Section 3.3). See [model_evaluation](model_valuation/) for the input and output.
 
 ## Disclaimer
 
-The GLOBGM is released under the GPL license v3.0 (see LICENSE). This program comes with ABSOLUTELY NO WARRANTY.
+The GLOBGM is released under the GPL license v3.0 (see [LICENSE](LICENSE)). This program comes with ABSOLUTELY NO WARRANTY.
