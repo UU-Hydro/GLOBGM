@@ -7,5 +7,5 @@ dummy.txt
 1 96
 1 32
 1 -1
-./research-globgm/input/version_1.0/s4_np32_ids.bin
+{yoda_input}/s4_np32_ids.bin
 mf6_mod_ss.inp

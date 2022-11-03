@@ -15,13 +15,12 @@ K_33_L2      vertical_conductivity_lowermost_layer.map DIST
 PRIM_STO_L1  primary_storage_coefficient_uppermost_layer.map DIST
 PRIM_STO_L2  primary_storage_coefficient_lowermost_layer.map DIST
 
-SS_STRT_DIR  {globgm_dir}/mf6_mod/glob_metis_224-96-32-32_ss/models/run_output_bin/
+SS_STRT_DIR  {globgm_dir}/mf6_mod/glob_hbl{pft_lev}_ss/models/run_output_bin/
 STRT_L1      initial_head_uppermost_layer.map DIST
 STRT_L2      initial_head_lowermost_layer.map DIST
 
 # recharge
 RECHARGE_P1:696  net_RCH_??????.map DIST
-
 # river
 RIV_STAGE_L1_P1:696 surface_water_elevation_??????.map DIST
 RIV_RBOT_L1_P1:696  surface_water_bed_elevation_used_??????.map DIST
@@ -35,3 +34,6 @@ DRN_COND_L1:2_P1:696 drain_conductance.map DIST
 # wel
 WEL_Q_L1_P1:696     abstraction_uppermost_layer_??????.map DIST
 WEL_Q_L2_P1:696     abstraction_lowermost_layer_??????.map DIST
+
+# solver settings
+OUTER_MAXIMUM 10000

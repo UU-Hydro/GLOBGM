@@ -1,5 +1,5 @@
-TILE_BB ./research-globgm/input/version_1.0/tile_163.txt
-INPUT_DIST_DIR ./globgm/input_map/ss/tile_???-163/steady-state_only/maps/
+TILE_BB {yoda_input}/tile_163.txt
+INPUT_DIST_DIR {globgm_dir}/input_map/steady-state/tile_???-163/steady-state_only/maps/
 
 NPER 1
 STARTDATE 19580101
