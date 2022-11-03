@@ -144,21 +144,21 @@ minAmp    = 0.
 smFilter  = TRUE
 #smFilter  = FALSE
 smRhoMin  = 0.5
-smNcFileName= "./research-globgm/input/version_1.0/monmean_sm_ESACCI-SOILMOISTURE-L3S-SSMV-COMBINED_1978-2019.nc3"
+smNcFileName= "{yoda_input}/monmean_sm_ESACCI-SOILMOISTURE-L3S-SSMV-COMBINED_1978-2019.nc3"
 smVarName= "sm"
 all_ilay = TRUE
 
 # input files:
 if (region == "USGS"){
- input_folder = "./nwis/"
+ input_folder = "{git_dir}/model_evaluation/analyze_gw_head_input/nwis/"
  measurement_folder = input_folder
 ##################################
 # BEGIN Using soil-moisture filter
  if (TRUE){
   # START FROM 1958:
-  modelresults_folder_top = "./model_output/30_arcsec/modelresults_folder_top/"
-  modelresults_folder_bot = "./model_output/30_arcsec/modelresults_folder_bot/"
-  station_with_xy_file = "./model_output/30_arcsec/summary_proc_d_top_2.txt"
+  modelresults_folder_top = "{yoda_output}/transient_1958-2015_timeseries/modelresults_folder_top/"
+  modelresults_folder_bot = "{yoda_output}/transient_1958-2015_timeseries/modelresults_folder_bot/"
+  station_with_xy_file = "{git_dir}/model_evaluation/analyze_gw_head_input/model_output/30_arcsec/summary_proc_d_top_2.txt"
   summaryFile = "summary_1km.txt"
  }
 # END Using soil-moisture filter
@@ -168,16 +168,16 @@ if (region == "USGS"){
 ##################################
 # BEGIN Using soil-moisture filter
 if (FALSE){
- modelresults_folder_top = "./model_output/5_arcmin/modelresults_folder_top/"
- modelresults_folder_bot = "./model_output/5_arcmin/modelresults_folder_bot/"
- station_with_xy_file = "./input/30_arcsec/summary_proc_d_top_2.txt"
+ modelresults_folder_top = ""
+ modelresults_folder_bot = ""
+ station_with_xy_file = ""
  summaryFile = "summary_10km.txt"
 }
 # END Using soil-moisture filter
 ##################################
 
 }
-output_folder = "f:/models/pcr-globwb-30arcsec/model_new/validation/statistics/"
+output_folder = "./statistics/"
 
 ########################################################################################################################################
 ########################################################################################################################################
