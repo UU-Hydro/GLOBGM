@@ -1,0 +1,38 @@
+TILE_BB ./research-globgm/input/version_1.0/tile_163.txt
+INPUT_DIST_DIR ./globgm/input_map/ss/tile_???-163/steady-state_only/maps/
+
+NPER 1
+STARTDATE 19580101
+
+TOP          top_uppermost_layer.map DIST
+BOT_L1       bottom_uppermost_layer.map DIST
+BOT_L2       bottom_lowermost_layer.map DIST
+K_L1         horizontal_conductivity_uppermost_layer.map DIST
+K_L2         horizontal_conductivity_lowermost_layer.map DIST
+K_33_L1      vertical_conductivity_uppermost_layer.map DIST
+K_33_L2      vertical_conductivity_lowermost_layer.map DIST
+PRIM_STO_L1  primary_storage_coefficient_uppermost_layer.map DIST
+PRIM_STO_L2  primary_storage_coefficient_lowermost_layer.map DIST
+
+STRT_L1      initial_head_uppermost_layer.map DIST
+STRT_L2      initial_head_lowermost_layer.map DIST
+
+# recharge
+RECHARGE_P1  net_RCH.map DIST
+
+# river
+RIV_STAGE_L1_P1 surface_water_elevation.map DIST
+RIV_RBOT_L1_P1  surface_water_bed_elevation_used.map DIST
+RIV_COND_L1_P1  bed_conductance_used.map DIST
+
+# drain
+DRN_ELEV_L1_P1   drain_elevation_uppermost_layer.map DIST
+DRN_ELEV_L2_P1   drain_elevation_lowermost_layer.map DIST
+DRN_COND_L1:2_P1 drain_conductance.map DIST
+
+# wel
+WEL_Q_L1_P1     abstraction_uppermost_layer.map DIST
+WEL_Q_L2_P1     abstraction_lowermost_layer.map DIST
+
+# solver settings
+OUTER_MAXIMUM 10000

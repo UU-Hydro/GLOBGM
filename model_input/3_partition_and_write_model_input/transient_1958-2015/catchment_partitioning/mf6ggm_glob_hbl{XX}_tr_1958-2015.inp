@@ -1,0 +1,10 @@
+43200 21600 2 -180 -90 8.333333333333E-003
+dummy.txt
+./glob_hbl{XX}_tr_1958-2015/
+../mf6_map/map_glob_hbl{XX}
+-4 0
+1 224
+1 96
+1 32
+1 32
+mf6_mod_hbl{XX}_tr_1958-2015.inp
