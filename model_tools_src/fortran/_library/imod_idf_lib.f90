@@ -1,0 +1,2035 @@
+!!  Copyright (C) Stichting Deltares, 2005-2017.
+!!
+!!  This file is part of iMOD.
+!!
+!!  This program is free software: you can redistribute it and/or modify
+!!  it under the terms of the GNU General Public License as published by
+!!  the Free Software Foundation, either version 3 of the License, or
+!!  (at your option) any later version.
+!!
+!!  This program is distributed in the hope that it will be useful,
+!!  but WITHOUT ANY WARRANTY; without even the implied warranty of
+!!  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+!!  GNU General Public License for more details.
+!!
+!!  You should have received a copy of the GNU General Public License
+!!  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+!!
+!!  Contact: imod.support@deltares.nl
+!!  Stichting Deltares
+!!  P.O. Box 177
+!!  2600 MH Delft, The Netherlands.
+
+MODULE IMOD_IDF
+
+USE IMOD_UTL
+USE IMOD_IDF_PAR
+
+CHARACTER(LEN=2),PARAMETER :: NEWLINE=CHAR(13)//CHAR(10)
+REAL(KIND=8),PARAMETER,PRIVATE :: TINY=0.1D0
+
+logical, save :: lidfout = .false.
+integer, save :: nidfout = 0
+integer, parameter :: mxidfout = 1000000
+character(len=1024), dimension(:), allocatable, save :: idfout
+
+CONTAINS
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFREAD(IDF,IDFNAME,RDDATA)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(OUT) :: IDF
+ CHARACTER(LEN=*),INTENT(IN) :: IDFNAME
+ INTEGER,INTENT(IN),OPTIONAL :: RDDATA
+ CHARACTER(LEN=2) :: TXT
+ INTEGER :: IOPEN,IDATA,I
+ LOGICAL :: IDFDEL,LEX
+ 
+ IDATA = 0
+ IDFDEL=.FALSE.
+ 
+ IF(PRESENT(RDDATA))THEN
+  IDATA=RDDATA
+  IF (IDATA.EQ.2)THEN
+   IDFDEL=.TRUE.
+   IDATA=1
+  ENDIF 
+ ENDIF
+       
+ IDFREAD=.FALSE.
+
+ TXT='RO'                   !## read only
+ IF(IDATA.EQ.-1)TXT='RW'    !## read/write
+
+ SELECT CASE (IDATA)
+  !## direct access
+  CASE (0,-1)
+   IOPEN=0
+  !# stream access
+  CASE (1)
+   IOPEN=1
+ END SELECT
+
+ !## try to open it
+ I=0; DO
+  INQUIRE(FILE=IDFNAME,EXIST=LEX)
+  IF(LEX)EXIT
+  IF(I.EQ.0)WRITE(*,'(A)') 'iMODFLOW keeps trying to find '//TRIM(IDFNAME); I=1
+  CALL SLEEP(10)
+ ENDDO
+ 
+ !## open idf
+ CALL IDFNULLIFY(IDF)
+ IF(IDFOPEN(IDF%IU,IDFNAME,IDF%ITYPE,TXT,IOPEN))THEN
+  IF(IDATA.NE.1)IDF%IXV=0  !## initialize %ixv in case no data is read from idf
+  IF(IDFREADDIM(IOPEN,IDF))THEN
+   IDF%FNAME=IDFNAME
+   IF(IDFREADDATA(IOPEN,IDF))THEN
+    !## get gregorian-date if possible
+    IDF%JD=UTL_IDFGETDATE(IDFNAME,IDF%DAYFRACTION,IDY=IDF%IDY,IMH=IDF%IMH,IYR=IDF%IYR,IHR=IDF%IHR,IMT=IDF%IMT,ISC=IDF%ISC)
+    !## get julian-date if possible
+    IF(IDF%JD.NE.0)THEN
+     IDF%JD=IDATETOJDATE(IDF%JD)
+    ENDIF
+    CALL IDFGETILAY(IDF,IDFNAME)
+    CALL IDFGETCOMMENT(IDF,IOPEN)  !!IDF%IADIT=0 !## nothing found
+    IDFREAD=.TRUE.
+   ELSE
+    WRITE(*,*) 'Error occured reading DATA from IDF'//CHAR(13)//TRIM(IDFNAME)
+   ENDIF
+  ELSE
+   WRITE(*,*) 'Error occured reading DIMENSIONS from IDF'//CHAR(13)//TRIM(IDFNAME)
+  ENDIF
+ ENDIF
+
+ !## if stream access, close file
+ IF(IOPEN.EQ.1.AND..NOT.IDFDEL)THEN
+  CLOSE(IDF%IU)
+ ENDIF
+   
+ END FUNCTION IDFREAD
+
+ !###======================================================================
+ LOGICAL FUNCTION ASCREAD(IDF,IDFNAME)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(OUT) :: IDF
+ CHARACTER(LEN=*),INTENT(IN) :: IDFNAME
+ CHARACTER(LEN=2) :: TXT
+ INTEGER :: IOS
+
+ ASCREAD=.FALSE.
+
+ !## open idf
+ IDF%IU=GETUNIT()
+ OPEN(IDF%IU,FILE=IDFNAME,STATUS='OLD',ACTION='READ',IOSTAT=IOS)
+ IF(IOS.NE.0)THEN
+  WRITE(*,*) 'Can not open '//TRIM(IDFNAME)
+  RETURN
+ ENDIF
+ IDF%IXV=0  !## initialize %ixv in case no data is read from idf
+ CALL IDFNULLIFY(IDF)
+ IF(ASCREADDATA(IDF))THEN
+  IDF%FNAME=IDFNAME
+  !## get gregorian-date if possible
+  IDF%JD=UTL_IDFGETDATE(IDFNAME)
+  !## get julian-date if possible
+  IF(IDF%JD.NE.0)THEN
+   IDF%JD=IDATETOJDATE(IDF%JD)
+  ENDIF
+  CALL IDFGETILAY(IDF,IDFNAME)
+  ASCREAD=.TRUE.
+ ELSE
+  WRITE(*,*) 'Error occured reading DATA from ASC'//CHAR(13)//TRIM(IDFNAME)
+ ENDIF
+
+ CLOSE(IDF%IU)
+
+ END FUNCTION ASCREAD
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFREADPART(IDF,XMIN,YMIN,XMAX,YMAX)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ REAL(KIND=8),INTENT(IN) :: XMIN,YMIN,XMAX,YMAX
+ INTEGER :: IR,IR1,IR2,IC,IC1,IC2,IROW,ICOL,NROW,NCOL
+
+ IDFREADPART=.FALSE.
+
+ !## get position to be read from idf inside current view-extent
+ CALL UTL_IDFIROWICOL(IDF,IR1,IC1,XMIN,YMAX)
+ CALL UTL_IDFIROWICOL(IDF,IR2,IC2,XMAX,YMIN)
+ !## adjust ic1,ic2
+ IF(IDF%XMIN.GE.XMIN)IC1=1
+ IF(IDF%XMAX.LE.XMAX)IC2=IDF%NCOL
+ !## adjust ir1,ir2
+ IF(IDF%YMIN.GE.YMIN)IR2=IDF%NROW
+ IF(IDF%YMAX.LE.YMAX)IR1=1
+
+ IF(IR1.NE.0.AND.IR2.NE.0.AND.IC1.NE.0.AND.IC2.NE.0)THEN
+  NROW=IR2-IR1+1
+  NCOL=IC2-IC1+1
+  ALLOCATE(IDF%X(NCOL,NROW))
+  IROW=0
+  DO IR=IR1,IR2
+   IROW=IROW+1
+   ICOL=0
+   DO IC=IC1,IC2
+    ICOL=ICOL+1
+    IDF%X(ICOL,IROW)=IDFGETVAL(IDF,IR,IC)
+   END DO
+  END DO
+  !## overrule current dimensions of idf()
+  IDF%NROW=NROW
+  IDF%NCOL=NCOL
+  IF(IDF%IEQ.EQ.0)THEN
+   IDF%XMAX=IDF%XMIN+ IC2   *IDF%DX
+   IDF%XMIN=IDF%XMIN+(IC1-1)*IDF%DX
+   IDF%YMIN=IDF%YMAX- IR2   *IDF%DY
+   IDF%YMAX=IDF%YMAX-(IR1-1)*IDF%DY
+  ELSE
+   !## shift coordinates
+   IDF%SX(0:IDF%NCOL)=IDF%SX(IC1-1:IC2)
+   IDF%SY(0:IDF%NROW)=IDF%SY(IR1-1:IR2)
+   IDF%XMIN=IDF%SX(0)
+   IDF%XMAX=IDF%SX(IDF%NCOL)
+   IDF%YMIN=IDF%SY(IDF%NROW)
+   IDF%YMAX=IDF%SY(0)
+  ENDIF
+
+  IDFREADPART=.TRUE.
+
+ ENDIF
+
+ END FUNCTION IDFREADPART
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFREADSCALE(IDFC,IDFM,SCLTYPE,ISMOOTH,PERC)
+ ! IDFM = mother idf and will return values on grid defined by IDFM
+ ! IDFC = child  idf and uses grid defined by IDFC to scale on IDFM
+ ! scltype:
+ ! 1 = SPECIAAL (IBOUNDARY)
+ ! 2 = REKENKUNDIG (SHEAD/VCONT/S)
+ ! 3 = GEOMETRISCH (KD)
+ ! 4 = SUM(Q)
+ ! 5 = SUM(COND)*RATIO (RIV/DRN/GHB CONDUCTANCE; RCH MM/DAY)
+ ! 6 = INVERSE (C)
+ ! 7 = MOST FREQUENT OCCURENCE
+ ! 8 = SUM (1/c)*RATIO
+ ! 9 = PERCENTILE
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDFC,IDFM
+ INTEGER,INTENT(IN) :: SCLTYPE
+ INTEGER,INTENT(IN) :: ISMOOTH
+ REAL(KIND=8),INTENT(IN),OPTIONAL :: PERC
+ INTEGER :: IRC,IRC1,IRC2,ICC,ICC1,ICC2,IRM,ICM,MXN,MXM,N,M,I,IINT,IDOWN
+ REAL(KIND=8),ALLOCATABLE,DIMENSION(:) :: FREQ,FFREQ
+ REAL(KIND=8) :: SVALUE,SFCT,DXM,DYM,DXC,DYC
+ LOGICAL :: FLAG1, FLAG2
+ REAL(KIND=8) :: XD1,XD2,YD1,YD2,TINY
+ CHARACTER(LEN=256) :: IDFNAME
+
+#ifdef PKSMPI 
+! call timing_tic('IO','IDFREADSCALE')
+#endif 
+ !## check extent
+ IF (IDFC%XMIN.GT.IDFM%XMIN.OR.IDFC%XMAX.LT.IDFM%XMAX.OR.IDFC%YMIN.GT.IDFM%YMIN.OR.IDFC%YMAX.LT.IDFM%YMAX) THEN
+  CALL IMOD_UTL_PRINTTEXT('=======================================',0)
+  CALL IMOD_UTL_PRINTTEXT('Error!',0)
+  CALL IMOD_UTL_PRINTTEXT('File: '//TRIM(idfc%FNAME),0)
+  CALL IMOD_UTL_PRINTTEXT('Undersizes current model dimensions!',0)
+  IF(IDFC%XMIN.GT.IDFM%XMIN)THEN
+   CALL IMOD_UTL_PRINTTEXT('XMIN IDF '//TRIM(IMOD_UTL_DTOS(IDFC%XMIN,'F',3))//' > XMIN MODEL '//TRIM(IMOD_UTL_DTOS(IDFM%XMIN,'F',3)),0)
+  ENDIF
+  IF(IDFC%XMAX.LT.IDFM%XMAX)THEN
+   CALL IMOD_UTL_PRINTTEXT('XMAX IDF '//TRIM(IMOD_UTL_DTOS(IDFC%XMAX,'F',3))//' < XMAX MODEL '//TRIM(IMOD_UTL_DTOS(IDFM%XMAX,'F',3)),0)
+  ENDIF
+  IF(IDFC%YMIN.GT.IDFM%YMIN)THEN
+   CALL IMOD_UTL_PRINTTEXT('YMIN IDF '//TRIM(IMOD_UTL_DTOS(IDFC%YMIN,'F',3))//' > YMIN MODEL '//TRIM(IMOD_UTL_DTOS(IDFM%YMIN,'F',3)),0)
+  ENDIF
+  IF(IDFC%YMAX.LT.IDFM%YMAX)THEN
+   CALL IMOD_UTL_PRINTTEXT('YMAX IDF '//TRIM(IMOD_UTL_DTOS(IDFC%YMAX,'F',3))//' < YMAX MODEL '//TRIM(IMOD_UTL_DTOS(IDFM%YMAX,'F',3)),0)
+  ENDIF
+  CALL IMOD_UTL_PRINTTEXT('=======================================',0)
+  CALL IMOD_UTL_PRINTTEXT('Error',2)
+ ENDIF
+
+ !## check for valid scaling options
+ SELECT CASE(SCLTYPE)
+  CASE(1,2,3,4,5,6,7,8,9,10,11)
+  CASE DEFAULT
+   CALL IMOD_UTL_PRINTTEXT('Error!',0)
+   CALL IMOD_UTL_PRINTTEXT('File: '//TRIM(IDFNAME),0)
+   CALL IMOD_UTL_PRINTTEXT('Missing upscaling method',2)
+ END SELECT
+ SELECT CASE(ISMOOTH)
+  CASE(0,1)
+  CASE DEFAULT
+   CALL IMOD_UTL_PRINTTEXT('Error!',0)
+   CALL IMOD_UTL_PRINTTEXT('File: '//TRIM(IDFNAME),0)
+   CALL IMOD_UTL_PRINTTEXT('Missing downscaling method',2)
+ END SELECT
+
+  flag2 = .false.
+
+ IDFREADSCALE=.FALSE.
+
+ SFCT=50.0
+ IF(PRESENT(PERC))SFCT=PERC
+ IINT=4
+ IDOWN=0
+
+ !## check whether MOTHER array is allocated, otherwise allocate it
+ if (.not.associated(idfm%x)) then
+  IF(.NOT.IDFALLOCATEX(IDFM))RETURN
+
+  !## clean array
+  IDFM%X=IDFC%NODATA
+  flag1 = .false.
+ else
+  flag1 = .true.
+ end if
+
+ IDFM%NODATA=IDFC%NODATA
+ !## construct sx/sy arrays for child/mother (if not yet existing)
+ IF(.NOT.IDFFILLSXSY(IDFC))RETURN
+ IF(.NOT.IDFFILLSXSY(IDFM))RETURN
+
+ !## most-frequent,percentiles
+ MXN=1;MXM=1
+ select case (scltype)
+  case (7,9,10)
+   MXN=0; DO I=1,IDFM%NCOL; N=(IDFM%SX(I)-IDFM%SX(I-1))/IDFC%DX; MXN=MAX(MXN,N); END DO
+   MXN=MXN+2
+   MXM=0; DO I=1,IDFM%NROW; M=(IDFM%SY(I-1)-IDFM%SY(I))/IDFC%DY; MXM=MAX(MXM,M); END DO
+   MXM=MXM+2
+ END SELECT !IF
+
+ ALLOCATE(FREQ(MXN*MXM))
+
+  !## scaling of zones
+ IF(scltype.EQ.10)THEN
+  ALLOCATE(FFREQ(MXN*MXM))
+ ELSE
+  ALLOCATE(FFREQ(1))
+ ENDIF
+
+ !## read/scale parameters
+ DO IRM=1,IDFM%NROW
+
+  !## get location to scale/cut data from IDFC
+  TINY=MIN(1.0D0,0.01D0*(IDFM%SY(IRM-1)-IDFM%SY(IRM)))
+  YD2=IDFM%SY(IRM-1)-TINY
+  YD1=IDFM%SY(IRM  )+TINY
+  CALL IMOD_UTL_POL1LOCATED(IDFC%SY,IDFC%NROW+1,YD2,IRC1)
+  CALL IMOD_UTL_POL1LOCATED(IDFC%SY,IDFC%NROW+1,YD1,IRC2)
+    
+  IF(IRC2.GE.IRC1.AND.IRC2.LE.IDFC%NROW.AND.IRC1.NE.0.AND.IRC2.NE.0)THEN
+
+   DO ICM=1,IDFM%NCOL
+
+    !## get location to scale/cut data from IDFC
+    TINY=MIN(1.0D0,0.01D0*(IDFM%SX(ICM)-IDFM%SX(ICM-1)))
+    XD1=IDFM%SX(ICM-1)+TINY
+    XD2=IDFM%SX(ICM  )-TINY
+    CALL IMOD_UTL_POL1LOCATED(IDFC%SX,IDFC%NCOL+1,XD1,ICC1)
+    CALL IMOD_UTL_POL1LOCATED(IDFC%SX,IDFC%NCOL+1,XD2,ICC2)
+
+    IF(ICC2.GE.ICC1.AND.ICC2.LE.IDFC%NCOL.AND.ICC1.NE.0.AND.ICC2.NE.0)THEN
+
+    DYM=IDFM%SY(IRM-1) -IDFM%SY(IRM)
+    DYC=IDFC%SY(IRC1-1)-IDFC%SY(IRC2)
+
+    !## get window to scale/cut data from IDFC
+
+     if (flag1) then ! only read for indices specified with idfm%x
+        if(idfm%x(icm,irm).ne.idfc%nodata) then
+           flag2 = .true.
+        else
+           flag2 = .false.
+        end if
+     else ! read all data
+        flag2 = .true.
+     end if
+     
+     if (flag2) then
+
+      DXM=IDFM%SX(ICM) -IDFM%SX(ICM-1)
+      DXC=IDFC%SX(ICC2)-IDFC%SX(ICC1-1)
+
+      CALL IDFGETBLOCKVALUE(IDFC,SCLTYPE,IRC1,IRC2,ICC1,ICC2,FREQ,FFREQ,SFCT,SVALUE,idown)
+
+      !## up- or downscaling?
+      IF(DXC*DYC.GT.DXM*DYM)THEN
+       IDOWN=1
+       IF(SCLTYPE.EQ.5)THEN
+        IF(SVALUE.NE.IDFC%NODATA)SVALUE=SVALUE*((DXM*DYM)/(DXC*DYC))
+       ENDIF
+      ENDIF
+
+      IF(SVALUE.EQ.IDFC%NODATA) SVALUE = IDFM%NODATA
+      IDFM%X(ICM,IRM)=SVALUE ! set value in mother
+
+     end if ! flag2
+
+    ENDIF
+   ENDDO
+  ENDIF
+ END DO
+
+ !## smooth only if cs.gt.dx
+ IF(IDOWN.EQ.1.AND.ISMOOTH.EQ.1)CALL IDFSMOOTH(IDFC,IDFM,IINT)
+
+ IF(ALLOCATED(FREQ)) DEALLOCATE(FREQ)
+ IF(ALLOCATED(FFREQ))DEALLOCATE(FFREQ)
+
+ IDFREADSCALE=.TRUE.
+#ifdef PKSMPI 
+! call timing_toc('IO','IDFREADSCALE')
+#endif 
+ END FUNCTION IDFREADSCALE
+
+ !###====================================================================
+ LOGICAL FUNCTION IDFFILLSXSY(IDF)
+ !###====================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ INTEGER :: I
+
+ IDFFILLSXSY=.TRUE.
+
+ !## allready filled in
+ IF(IDF%IEQ.EQ.1)RETURN
+
+ IDFFILLSXSY=.FALSE.
+ IF(.NOT.IDFALLOCATESXY(IDF))RETURN
+
+ IDF%SX(0)=IDF%XMIN
+ DO I=1,IDF%NCOL; IDF%SX(I)=IDF%SX(I-1)+IDF%DX; END DO
+ IDF%SY(0)=IDF%YMAX
+ DO I=1,IDF%NROW; IDF%SY(I)=IDF%SY(I-1)-IDF%DY; END DO
+
+ IDFFILLSXSY=.TRUE.
+
+ END FUNCTION IDFFILLSXSY
+
+ !###====================================================================
+ SUBROUTINE IDFGETBLOCKVALUE(IDF,SCLTYPE,IR1,IR2,IC1,IC2,FREQ,FFREQ,SFCT,SVALUE,IDOWN)
+ !###====================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ REAL(KIND=8),INTENT(OUT),DIMENSION(:) :: FREQ,FFREQ
+ REAL(KIND=8),INTENT(IN) :: SFCT
+ INTEGER,INTENT(IN) :: IR1,IR2,IC1,IC2,SCLTYPE
+ REAL(KIND=8),INTENT(OUT) :: SVALUE
+ INTEGER, INTENT(IN) :: IDOWN
+ INTEGER :: I,IROW,ICOL,NAJ,IR,IC,NROW,NCOL,NLAY,N
+ REAL(KIND=8) :: IDFVAL,NVALUE,NFRAC,F
+ REAL(KIND=8),DIMENSION(1) :: XTEMP
+
+ IF (IDOWN.EQ.1.AND.IR1.EQ.IR2.AND.IC1.EQ.IC2) THEN
+  if(associated(idf%x))then
+   idfval=idf%x(ic1,ir1)
+  else
+   IDFVAL=IDFGETVAL(IDF,IR1,IC1)
+  endif
+  SVALUE = IDFVAL
+  RETURN  
+ END IF
+
+ SVALUE=0.0 !## scale value
+ NVALUE=0.0
+ SELECT CASE (SCLTYPE)
+  CASE (7,9,10)
+   FREQ=0.0
+ END SELECT
+
+ DO IROW=IR1,IR2
+  DO ICOL=IC1,IC2
+   if(associated(idf%x))then
+    idfval=idf%x(icol,irow)
+   else
+    IDFVAL=IDFGETVAL(IDF,IROW,ICOL)
+   endif
+
+   SELECT CASE (SCLTYPE)
+    !## special for boundary purposes
+    CASE (1)
+     IF(IDFVAL.LT.0)SVALUE=IDFVAL
+     IF(SVALUE.EQ.0.AND.IDFVAL.GT.0)SVALUE=IDFVAL
+     NVALUE=NVALUE+1.0
+    !## arithmetic mean (HEAD/SC); sum
+    CASE (2,4,5)
+     IF(IDFVAL.NE.IDF%NODATA)THEN
+      SVALUE=SVALUE+IDFVAL
+      NVALUE=NVALUE+1.0
+     ENDIF
+    !## geometric mean (KD)
+    CASE (3)
+     IF(IDFVAL.NE.IDF%NODATA.AND.IDFVAL.GT.0.0)THEN
+      SVALUE=SVALUE+LOG(IDFVAL)
+      NVALUE=NVALUE+1.0
+     ENDIF
+    !## sum, sum inverse
+    CASE (6,8)
+     IF(IDFVAL.NE.IDF%NODATA.AND.IDFVAL.NE.0.0)THEN
+      SVALUE=SVALUE+(1.0/IDFVAL)
+      NVALUE=NVALUE+1.0
+     ENDIF
+    !## most frequent occurence,percentile
+    CASE (7,9,10)
+     IF(IDFVAL.NE.IDF%NODATA)THEN
+      NVALUE=NVALUE+1.0
+      FREQ(INT(NVALUE))=IDFVAL
+     ENDIF
+    !## arithmetic mean - include nodata
+    CASE (11)
+     IF(IDFVAL.NE.IDF%NODATA)SVALUE=SVALUE+IDFVAL
+     NVALUE=NVALUE+1.0
+    CASE DEFAULT
+     WRITE(*,'(//A//)') 'Scaling not known for: '//TRIM(IDF%FNAME)
+   END SELECT
+  ENDDO
+ ENDDO
+
+ IF(NVALUE.LE.0.0)THEN
+  SVALUE=IDF%NODATA
+  RETURN
+ ENDIF
+
+ SELECT CASE (SCLTYPE)
+  CASE (1,4)!## boundary, sum
+
+  CASE (2,11)  !## arithmetic mean
+   SVALUE=SVALUE/NVALUE
+  CASE (3)  !## geometric
+   SVALUE=EXP(SVALUE/NVALUE)
+  CASE (6)  !## c-waarde reciprook opgeteld, terug naar gem. dagen
+   SVALUE=1.0/(SVALUE/NVALUE)
+  CASE (7)
+   N=INT(NVALUE)
+   CALL IMOD_UTL_QKSORT(SIZE(FREQ),N,FREQ)
+   SVALUE=IMOD_UTL_GETMOSTFREQ(FREQ,SIZE(FREQ),N)
+!   !## add fraction to the most frequent occurence
+!   NFRAC=NVALUE/REAL(((IR2-IR1)+1)*((IC2-IC1)+1))
+!   SVALUE=SVALUE+(1.0-NFRAC)
+  CASE (8)  !## PWT c-waarde reciprook opgeteld, terug naar gem. dagen * fraction
+   NFRAC=NVALUE/REAL(((IR2-IR1)+1)*((IC2-IC1)+1))
+   SVALUE=1.0/((SVALUE*NFRAC)/NVALUE)
+  CASE (9)  !## percentile
+   CALL IMOD_UTL_GETMED(FREQ,SIZE(FREQ),IDF%NODATA,(/SFCT*100.0D0/),1,NAJ,XTEMP)
+   SVALUE=XTEMP(1)
+  CASE (10)  !## zonation
+   N=INT(NVALUE)
+   IF(MAXVAL(FREQ(1:N)).GT.0.0)THEN
+    !## get fractions
+    DO I=1,N; F=MOD(FREQ(I),1.0); IF(F.EQ.0.0)F=1.0; FFREQ(I)=F; ENDDO
+    !## remove fractions
+    DO I=1,N; FREQ(I)=INT(FREQ(I)); ENDDO
+    !## sort zones
+    CALL IMOD_UTL_QKSORT(SIZE(FREQ),N,FREQ)
+    !## get most available zone
+    SVALUE=IMOD_UTL_GETMOSTFREQ(FREQ,SIZE(FREQ),N)
+    IF(SVALUE.GT.0)THEN
+     !## set fraction to zero for zones not equal to most available zone
+     !## only whenever fraction are existing priorly
+     IF(INT(SUM(FFREQ(1:N))).NE.N)THEN
+      DO I=1,N; IF(INT(SVALUE).NE.INT(FREQ(I)))FFREQ(I)=0.0; ENDDO
+      !## get mean fraction
+      F=0; DO I=1,N; F=F+FFREQ(I); ENDDO; F=F/REAL(N)
+      !## add fraction to most available zone
+      IF(F.LT.1.0)SVALUE=SVALUE+F
+     ENDIF
+    ENDIF     
+   ENDIF
+   
+  END SELECT
+
+ ! 1 = SPECIAAL (IBOUNDARY)
+ ! 2 = REKENKUNDIG (SHEAD/VCONT/S)
+ ! 3 = GEOMETRISCH (KD)
+ ! 4 = SUM(Q)
+ ! 5 = SUM(COND)*RATIO (RIV/DRN/GHB CONDUCTANCE; RCH MM/DAY)
+ ! 6 = INVERSE (c)
+ ! 7 = MOST FREQUENT OCCURENCE
+ ! 8 = SUM (1/c)*RATIO
+ ! 9 = PERCENTILE
+
+ END SUBROUTINE IDFGETBLOCKVALUE
+
+ !###====================================================================
+ SUBROUTINE IDFSMOOTH(IDFC,IDFM,IINT)
+ !###====================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDFC,IDFM
+ INTEGER,INTENT(IN) :: IINT
+ DOUBLE PRECISION :: DTINY ! = 0.001D0
+ INTEGER :: IC,IR,IC1,IC2,IR1,IR2,NPC,NPR,ICOL,IROW,I,J,IY,II,JJ
+ REAL(KIND=8) :: XC,XX,Y,YY,YC,XCIDF,YCIDF,XMID,YMID,TINY
+ REAL(KIND=8),ALLOCATABLE,DIMENSION(:) :: X1A,X2A
+ REAL(KIND=8),ALLOCATABLE,DIMENSION(:,:) :: Y2A 
+ REAL(KIND=8) :: IDFVAL
+
+ IF(ALLOCATED(X1A)) DEALLOCATE(X1A)
+ IF(ALLOCATED(X2A)) DEALLOCATE(X2A)
+ IF(ALLOCATED(Y2A)) DEALLOCATE(Y2A)
+
+ !## find number of x- y locations of grid to be interpolated
+ TINY=MIN(1.0,0.001*(IDFM%SX(IDFM%NCOL)-IDFM%SX(0)))
+ DTINY=TINY
+ CALL IMOD_UTL_POL1LOCATED(IDFC%SX,IDFC%NCOL+1,DBLE(IDFM%SX(0))        +DTINY,IC1)
+ CALL IMOD_UTL_POL1LOCATED(IDFC%SX,IDFC%NCOL+1,DBLE(IDFM%SX(IDFM%NCOL))-DTINY,IC2)
+
+ TINY=MIN(1.0,0.001*(IDFM%SY(0)-IDFM%SY(IDFM%NROW)))
+ DTINY=TINY
+ CALL IMOD_UTL_POL1LOCATED(IDFC%SY,IDFC%NROW+1,DBLE(IDFM%SY(0))        -DTINY,IR1)
+ CALL IMOD_UTL_POL1LOCATED(IDFC%SY,IDFC%NROW+1,DBLE(IDFM%SY(IDFM%NROW))+DTINY,IR2)
+
+ !## add extra for boundary (north/west/east/south)
+ IC1=MAX(1,IC1-1)
+ IC2=MIN(IDFC%NCOL,IC2+1)
+ IR1=MAX(1,IR1-1)
+ IR2=MIN(IDFC%NROW,IR2+1)
+
+ !## number of distinguished coordinates from child idf (coarser)
+ NPC=(IC2-IC1)+1
+ NPR=(IR2-IR1)+1
+
+ !## assign one extra row/column for boundary
+ ALLOCATE(X1A(NPC),X2A(NPR),Y2A(NPC,NPR)) !,XCOPY(IDFM%NCOL,IDFM%NROW))
+
+ !!NPR=1
+ NPR=0
+ DO IR=IR1,IR2  !## loop over row in coarser child
+  !!NPC=1
+  NPC=0
+  NPR=NPR+1
+  YMID=(IDFC%SY(IR-1)+IDFC%SY(IR))/2.0
+  X2A(NPR)=YMID
+  DO IC=IC1,IC2 !## loop over col in coarser child idf
+   NPC=NPC+1
+   XMID=(IDFC%SX(IC-1)+IDFC%SX(IC))/2.0
+   X1A(NPC)=XMID
+   !## read value from idfm%x()
+   CALL UTL_IDFIROWICOL(IDFM,IROW,ICOL,X1A(NPC),X2A(NPR))
+   IF(ICOL.EQ.0.OR.IROW.EQ.0)THEN
+    if(associated(idfc%x))then
+     idfval=idfc%x(ic,ir)
+    else
+     IDFVAL=IDFGETVAL(IDFC,IR,IC)
+    endif
+    IF(IDFVAL.EQ.IDFC%NODATA) IDFVAL=IDFM%NODATA
+   ELSE 
+    IDFVAL=IDFM%X(ICOL,IROW)  
+   ENDIF
+   Y2A(NPC,NPR)=IDFVAL
+ 
+  ENDDO
+ ENDDO
+
+ 
+ CALL IMOD_UTL_POL1INTMAIN(IDFM%NCOL,IDFM%NROW,NPC,NPR,X1A,X2A,Y2A,IDFM%SX,IDFM%SY,IDFM%X,IINT,IDFM%NODATA)
+
+ IF(ALLOCATED(X1A))DEALLOCATE(X1A)
+ IF(ALLOCATED(X2A))DEALLOCATE(X2A)
+ IF(ALLOCATED(Y2A))DEALLOCATE(Y2A)
+
+ END SUBROUTINE IDFSMOOTH
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFWRITEPART(IDF1,IDF2)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF1,IDF2  !## write idf1 in idf2
+ INTEGER :: IR,IR1,IR2,IC,IC1,IC2,IROW,ICOL,NROW,NCOL
+ REAL(KIND=8) :: X,Y
+
+ IDFWRITEPART=.FALSE.
+
+ !## get position to be write idf to
+ IF(IDF1%IEQ.EQ.0)THEN
+  X=IDF1%XMIN+IDF1%DX/2.0
+  Y=IDF1%YMAX-IDF1%DY/2.0
+ ELSE
+  X=(IDF1%SX(0)+IDF1%SX(1))/2.0
+  Y=(IDF1%SY(0)+IDF1%SY(1))/2.0
+ ENDIF
+ CALL UTL_IDFIROWICOL(IDF2,IR1,IC1,X,Y)
+ IF(IDF1%IEQ.EQ.0)THEN
+  X=IDF1%XMAX-IDF1%DX/2.0
+  Y=IDF1%YMIN+IDF1%DY/2.0
+ ELSE
+  X=(IDF1%SX(IDF1%NCOL)+IDF1%SX(IDF1%NCOL-1))/2.0
+  Y=(IDF1%SY(IDF1%NROW)+IDF1%SY(IDF1%NROW-1))/2.0
+ ENDIF
+ CALL UTL_IDFIROWICOL(IDF2,IR2,IC2,X,Y)
+
+ IF(IR1.NE.0.AND.IR2.NE.0.AND.IC1.NE.0.AND.IC2.NE.0)THEN
+
+  NROW=IR2-IR1+1
+  NCOL=IC2-IC1+1
+
+  !## wrong dimensions
+  IF(NROW.NE.IDF1%NROW.OR.NCOL.NE.IDF1%NCOL)RETURN
+
+  IROW=0
+  DO IR=IR1,IR2
+   IROW=IROW+1
+   ICOL=0
+   DO IC=IC1,IC2
+    ICOL=ICOL+1
+    CALL IDFPUTVAL(IDF2,IR,IC,IDF1%X(ICOL,IROW))
+    IF(IDF1%X(ICOL,IROW).NE.IDF2%NODATA)THEN
+     IDF2%DMIN=MIN(IDF1%X(ICOL,IROW),IDF2%DMIN)
+     IDF2%DMAX=MAX(IDF1%X(ICOL,IROW),IDF2%DMAX)
+    ENDIF
+   END DO
+  END DO
+
+  WRITE(IDF2%IU,REC=7+ICF) IDF2%DMIN
+  WRITE(IDF2%IU,REC=8+ICF) IDF2%DMAX
+
+  IDFWRITEPART=.TRUE.
+
+ ENDIF
+
+ END FUNCTION IDFWRITEPART
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFWRITE_WRAPPER(NCOL,NROW,X,DX,DY,XMIN,YMIN,NODATA,COMMENT,FNAME,IDOUBLE)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN) :: NCOL,NROW
+ REAL(KIND=8),INTENT(IN),DIMENSION(NCOL,NROW) :: X
+ REAL(KIND=8),DIMENSION(:),INTENT(IN) :: DX
+ REAL(KIND=8),DIMENSION(:),INTENT(IN) :: DY
+ REAL(KIND=8),INTENT(IN) :: XMIN,YMIN,NODATA
+ INTEGER,INTENT(IN),OPTIONAL :: IDOUBLE
+ CHARACTER(LEN=*),INTENT(IN) :: FNAME,COMMENT
+ TYPE(IDFOBJ) :: IDF
+ INTEGER :: I,IDBL
+ LOGICAL :: LEX
+ 
+ !## default single precision
+ IDBL=4; IF(PRESENT(IDOUBLE))IDBL=IDOUBLE
+ 
+#ifdef PKSMPI 
+! call timing_tic('IO','IDFWRITE')
+#endif 
+ IDFWRITE_WRAPPER=.FALSE.
+
+ CALL IDFNULLIFY(IDF)
+ IDF%XMIN  =XMIN
+ IDF%YMIN  =YMIN
+ IDF%NCOL  =NCOL
+ IDF%NROW  =NROW
+ IDF%IXV   =0
+ IDF%ITB   =0
+ IDF%UNITS =0
+ IDF%NODATA=NODATA
+ IDF%ITYPE=IDBL
+ 
+ IF(SIZE(DX).EQ.IDF%NCOL.AND.SIZE(DY).EQ.IDF%NROW)THEN
+  IF(.NOT.IDFALLOCATESXY(IDF))RETURN
+  IDF%IEQ =1
+  IDF%XMAX=IDF%XMIN+SUM(DX)
+  IDF%SX(0)=IDF%XMIN
+  DO I=1,IDF%NCOL; IDF%SX(I)=IDF%SX(I-1)+DX(I); ENDDO
+  IDF%YMAX =IDF%YMIN+SUM(DY)
+  IDF%SY(0)=IDF%YMAX
+  DO I=1,IDF%NROW; IDF%SY(I)=IDF%SY(I-1)-DY(I); ENDDO
+ ELSEIF(SIZE(DX).EQ.1.AND.SIZE(DY).EQ.1)THEN
+  IDF%IEQ =0
+  IDF%DX  =DX(1)
+  IDF%DY  =DY(1)
+  IDF%XMAX=IDF%XMIN+REAL(IDF%NCOL)*DX(1)
+  IDF%YMAX=IDF%YMIN+REAL(IDF%NROW)*DY(1)
+ ELSE
+  write(*,*) size(dx),idf%ncol,size(dy),idf%nrow
+  write(*,*) trim(fname)
+  WRITE(*,*) 'ERROR, check array dx(.) and dy(.) to be consistent with ncol and nrow'
+  RETURN
+ ENDIF
+
+ IF(.NOT.IDFALLOCATEX(IDF))RETURN
+ IDF%X=X
+
+ CALL IDFFILLCOMMENT(IDF,COMMENT)
+
+ i = index(fname,char(47),.true.)
+ if (i.le.0) i = index(fname,char(92),.true.)
+ if(i.gt.0) call imod_utl_createdir(fname(:i))
+ IDFWRITE_WRAPPER=IDFWRITE(IDF,FNAME,0)
+
+ CALL IDFDEALLOCATEX(IDF)
+ IF(IDF%IU.GT.0)THEN
+  INQUIRE(UNIT=IDF%IU,OPENED=LEX); IF(LEX)CLOSE(IDF%IU)
+ ENDIF
+#ifdef PKSMPI 
+! call timing_toc('IO','IDFWRITE')
+#endif
+ END FUNCTION IDFWRITE_WRAPPER
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFWRITE(IDF,IDFNAME,IQ)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN) :: IQ  !question to overwrite yes=1;no=0
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ CHARACTER(LEN=*),INTENT(IN) :: IDFNAME
+ INTEGER :: IDATA
+ CHARACTER(LEN=2) :: TXT
+ logical :: lpks, pks7mpimasterwrite ! PKS
+ 
+! store file name of output IDFs
+ if (lidfout) then
+    if (.not.allocated(idfout)) allocate(idfout(mxidfout))
+    nidfout = nidfout + 1
+    if (nidfout.gt.mxidfout) call imod_utl_printtext('Error storing IDF file name: increase MXIDFOUT!',-3)
+    idfout(nidfout) = trim(idfname)
+ end if
+ 
+ IDFWRITE=.FALSE.
+
+ IDATA=1
+ TXT  ='WO'  !## write only
+
+ !##open idf
+ IF(IDFOPEN(IDF%IU,IDFNAME,IDF%ITYPE,TXT,IDATA,IQUESTION=IQ))THEN
+  IF(IDFWRITEDIM(IDATA,IDF).AND.IDFWRITEDATA(IDATA,IDF))THEN
+   IDFWRITE=.TRUE.
+   !## try to write comment, if available
+   CALL IDFWRITECOMMENT(IDF,IDATA)
+  ENDIF
+ ENDIF
+
+ IF(IDF%IU.NE.0)CLOSE(IDF%IU)
+ IDF%IU=0
+
+ END FUNCTION IDFWRITE
+
+ !!###====================================================================
+ !LOGICAL FUNCTION IDFWRITE_EQUI(IDF,IDFNAME)
+ !!###====================================================================
+ !IMPLICIT NONE
+ !TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ !CHARACTER(LEN=*),INTENT(IN) :: IDFNAME
+ !INTEGER :: SNCOL,SNROW,IROW,ICOL,IR,IC,NR,NC
+ !REAL :: X,CS,DX,DY
+ !
+ !IDFWRITE_EQUI=.FALSE.
+ !
+ !!## open idf
+ !IF(.NOT.IDFOPEN(IDF%IU,IDFNAME,IDF%ITYPE,'WO',1,IQUESTION=0))RETURN
+ !
+ !CS=IDF%XMAX-IDF%XMIN
+ !DO ICOL=1,IDF%NCOL
+ ! CS=MIN(CS,IDF%SX(ICOL)-IDF%SX(ICOL-1))
+ !END DO
+ !
+ !SNCOL=(IDF%XMAX-IDF%XMIN)/CS
+ !SNROW=(IDF%YMAX-IDF%YMIN)/CS
+ !
+ !IDF%DMIN= 10.0E10
+ !IDF%DMAX=-10.0E10
+ !DO IROW=1,IDF%NROW
+ ! DO ICOL=1,IDF%NCOL
+ !  IF(IDF%X(ICOL,IROW).NE.IDF%NODATA)THEN
+ !   IDF%DMIN=MIN(IDF%DMIN,IDF%X(ICOL,IROW))
+ !   IDF%DMAX=MAX(IDF%DMAX,IDF%X(ICOL,IROW))
+ !  ENDIF
+ ! END DO
+ !END DO
+ !
+ !WRITE(IDF%IU) 1271       !header: 1271
+ !WRITE(IDF%IU) SNCOL      !1
+ !WRITE(IDF%IU) SNROW      !2
+ !WRITE(IDF%IU) IDF%XMIN   !3
+ !WRITE(IDF%IU) IDF%XMAX   !4
+ !WRITE(IDF%IU) IDF%YMIN   !5
+ !WRITE(IDF%IU) IDF%YMAX   !6
+ !WRITE(IDF%IU) IDF%DMIN   !7
+ !WRITE(IDF%IU) IDF%DMAX   !8
+ !WRITE(IDF%IU) IDF%NODATA !9
+ !WRITE(IDF%IU) INT(0,1),INT(0,1),INT(IDF%UNITS,1),INT(0,1)          !10 - IEQ
+ !WRITE(IDF%IU) CS         !11
+ !WRITE(IDF%IU) CS         !12
+ !
+ !DO IROW=1,IDF%NROW
+ ! DY=IDF%SY(IROW-1)-IDF%SY(IROW)
+ ! NR=INT(DY/CS)
+ ! DO IR=1,NR
+ !  DO ICOL=1,IDF%NCOL
+ !   DX=IDF%SX(ICOL)-IDF%SX(ICOL-1)
+ !   NC=INT(DX/CS)
+ !   WRITE(IDF%IU) (X,IC=1,NC)
+ !  END DO
+ ! END DO
+ !END DO
+ !
+ !CLOSE(IDF%IU)
+ !IDF%IU=0
+ !
+ !IDFWRITE_EQUI=.TRUE.
+ !
+ !END FUNCTION IDFWRITE_EQUI
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFREADDATA(IDATA,IDF)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN) :: IDATA
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ INTEGER :: IROW,ICOL,I,IOS
+ REAL(KIND=SP_KIND),ALLOCATABLE,DIMENSION(:,:) :: X
+ REAL(KIND=SP_KIND),ALLOCATABLE,DIMENSION(:) :: V
+
+ IDFREADDATA=.TRUE.
+
+ IF(IDF%IU.LE.0)RETURN
+ IF(IDATA.EQ.0)RETURN
+ 
+ IDFREADDATA=.FALSE.
+
+ IF(.NOT.IDFALLOCATEX(IDF))RETURN
+ IF(IDF%IXV.EQ.0)THEN
+
+  IF(IDF%ITYPE.EQ.4)THEN
+   ALLOCATE(X(IDF%NCOL,IDF%NROW))
+   READ(IDF%IU,IOSTAT=IOS) ((X(ICOL,IROW),ICOL=1,IDF%NCOL),IROW=1,IDF%NROW)
+   IDF%X=X
+   DEALLOCATE(X)
+  ELSE
+   READ(IDF%IU,IOSTAT=IOS) ((IDF%X(ICOL,IROW),ICOL=1,IDF%NCOL),IROW=1,IDF%NROW)
+  ENDIF
+  IF(IOS.NE.0)RETURN  
+
+ ELSEIF(IDF%IXV.EQ.1)THEN
+
+  IF(IDF%ITYPE.EQ.4)THEN
+   ALLOCATE(V(IDF%NCOL*IDF%NROW))
+   READ(IDF%IU,IOSTAT=IOS) (V(I),I=1,IDF%NCOL*IDF%NROW)
+   IDF%V=V
+   DEALLOCATE(V)
+  ELSE
+   READ(IDF%IU,IOSTAT=IOS) (IDF%V(I),I=1,IDF%NROW*IDF%NCOL)
+  ENDIF
+  IF(IOS.NE.0)RETURN
+
+ ENDIF
+ CLOSE(IDF%IU)
+ 
+ IDFREADDATA=.TRUE.
+
+ END FUNCTION IDFREADDATA
+
+  !###======================================================================
+ SUBROUTINE IDFGETCOMMENT(IDF,IDATA)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,PARAMETER :: NP=1
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ INTEGER,INTENT(IN) :: IDATA
+ INTEGER :: IOS,N,I,IADIT
+ INTEGER,DIMENSION(NP) :: IP
+ INTEGER(KIND=DP_KIND) :: IREC
+ 
+ !## read entire data-block
+ IF(IDATA.EQ.1)THEN 
+  IF(IDF%ITYPE.EQ.4)THEN  
+   READ(IDF%IU,IOSTAT=IOS) IADIT
+  ELSEIF(IDF%ITYPE.EQ.8)THEN  
+   READ(IDF%IU,IOSTAT=IOS) IADIT,I
+  ENDIF
+ ELSE
+  IREC= 11 + ABS(IDF%IEQ-1) * 2 + IDF%IEQ * (IDF%NROW+IDF%NCOL) + IDF%ITB*2 + (IDF%NROW*IDF%NCOL) + 1
+  READ(IDF%IU,REC=IREC,IOSTAT=IOS) IADIT
+ ENDIF
+
+ IF(IOS.NE.0)RETURN
+ 
+ !# read binair number (e.g. 256) and returns array (/1,0,0,1,0,0,1/)
+ CALL IMOD_UTL_FILLARRAY(IP,NP,IADIT)
+ 
+ !## read comments
+ IF(IP(1).EQ.1)THEN
+  IF(IDATA.EQ.1)THEN
+   IF(IDF%ITYPE.EQ.4)THEN
+    READ(IDF%IU,IOSTAT=IOS) N
+   ELSEIF(IDF%ITYPE.EQ.8)THEN
+    READ(IDF%IU,IOSTAT=IOS) N,I
+   ENDIF
+  ELSE
+   IREC=IREC+1
+   READ(IDF%IU,REC=IREC,IOSTAT=IOS) N
+  ENDIF
+
+  !## error in reading
+  IF(IOS.NE.0)RETURN
+  ALLOCATE(IDF%COMMENT(N))
+  IF(IDATA.EQ.1)THEN
+   READ(IDF%IU,IOSTAT=IOS) (IDF%COMMENT(I),I=1,N)
+   IF(IOS.NE.0)RETURN
+  ELSE
+   IF(IDF%ITYPE.EQ.4)THEN
+    DO I=1,N
+     IREC=IREC+1
+     READ(IDF%IU,REC=IREC,IOSTAT=IOS) IDF%COMMENT(I)
+     IF(IOS.NE.0)RETURN
+    ENDDO
+   ELSEIF(IDF%ITYPE.EQ.8)THEN
+    I=1
+    DO
+     IREC=IREC+1
+     IF(I.EQ.N)THEN
+      READ(IDF%IU,REC=IREC,IOSTAT=IOS) IDF%COMMENT(I)
+     ELSE
+      READ(IDF%IU,REC=IREC,IOSTAT=IOS) IDF%COMMENT(I),IDF%COMMENT(I+1)
+     ENDIF
+     IF(IOS.NE.0)RETURN
+     I=I+2; IF(I.GT.N)EXIT
+    ENDDO
+   ENDIF
+  ENDIF
+ ENDIF
+ 
+ END SUBROUTINE IDFGETCOMMENT
+ !
+ !!###======================================================================
+ !SUBROUTINE IDFGETCOMMENT(IDF,IDATA)
+ !!###======================================================================
+ !IMPLICIT NONE
+ !INTEGER,PARAMETER :: NP=1
+ !TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ !INTEGER,INTENT(IN) :: IDATA
+ !INTEGER :: IOS,N,I,IADIT
+ !INTEGER,DIMENSION(NP) :: IP
+ !INTEGER(KIND=DP_KIND) :: IREC
+ !
+ !!## read entire data-block
+ !IF(IDATA.EQ.1)THEN 
+ ! READ(IDF%IU,IOSTAT=IOS) IADIT
+ !ELSE
+ ! IREC= 11 + ABS(IDF%IEQ-1) * 2 + IDF%IEQ * (IDF%NROW+IDF%NCOL) + IDF%ITB*2 + (IDF%NROW*IDF%NCOL) + 1
+ ! READ(IDF%IU,REC=IREC,IOSTAT=IOS) IADIT
+ !ENDIF
+ !
+ !IF(IOS.NE.0)RETURN
+ !
+ !!# read binair number (e.g. 256) and returns array (/1,0,0,1,0,0,1/)
+ !CALL IMOD_UTL_FILLARRAY(IP,NP,IADIT)
+ !
+ !!## read comments
+ !IF(IP(1).EQ.1)THEN
+ ! IF(IDATA.EQ.1)THEN
+ !  READ(IDF%IU,IOSTAT=IOS) N
+ ! ELSE
+ !  IREC=IREC+1
+ !  READ(IDF%IU,REC=IREC,IOSTAT=IOS) N
+ ! ENDIF
+ !
+ ! !## error in reading
+ ! IF(IOS.NE.0)RETURN
+ ! ALLOCATE(IDF%COMMENT(N))
+ ! IF(IDATA.EQ.1)THEN
+ !  READ(IDF%IU,IOSTAT=IOS) (IDF%COMMENT(I),I=1,N)
+ !  IF(IOS.NE.0)RETURN
+ ! ELSE
+ !  DO I=1,N
+ !   IREC=IREC+1
+ !   READ(IDF%IU,REC=IREC,IOSTAT=IOS) IDF%COMMENT(I)
+ !   IF(IOS.NE.0)RETURN
+ !  ENDDO
+ ! ENDIF
+ !ENDIF
+ !
+ !END SUBROUTINE IDFGETCOMMENT
+
+ !###======================================================================
+ SUBROUTINE IDFFILLCOMMENT(IDF,STRING)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ CHARACTER(LEN=*),INTENT(IN) :: STRING
+ CHARACTER(LEN=50) :: DATESTRING
+ CHARACTER(LEN=256) :: DEFAULT
+
+ !## fill default values in the beginning
+ CALL IDFFILLCOMMENT_DATETIME(DATEANDTIME=DATESTRING)
+ DEFAULT='User :'//TRIM(IDFGETENV('USERNAME'))//NEWLINE// &
+         'iMODFLOW Version 2005: '//NEWLINE// &
+         'Creation Date: '//TRIM(DATESTRING)//NEWLINE
+ CALL IDFFILLCOMMENT2(IDF,TRIM(DEFAULT)//STRING)
+
+ END SUBROUTINE IDFFILLCOMMENT
+
+!###======================================================================
+ SUBROUTINE IDFFILLCOMMENT_DATETIME(DATEANDTIME)
+ !###======================================================================
+ IMPLICIT NONE
+ CHARACTER(LEN=*),INTENT(OUT) :: DATEANDTIME
+ CHARACTER(LEN=50) :: CTIME
+ INTEGER :: TIME
+
+ DATEANDTIME=CTIME(TIME())
+ DATEANDTIME=DATEANDTIME(1:LEN_TRIM(DATEANDTIME)-1) !## there is something "dirty" on the back of this
+
+ END SUBROUTINE IDFFILLCOMMENT_DATETIME
+
+ !###======================================================================
+ FUNCTION IDFGETENV(IKEYW)
+ !###======================================================================
+ IMPLICIT NONE
+ CHARACTER(LEN=*),INTENT(IN) :: IKEYW
+ CHARACTER(LEN=50) :: IDFGETENV
+
+ CALL GETENV(IKEYW,IDFGETENV)
+
+ END FUNCTION IDFGETENV
+
+ !###======================================================================
+ SUBROUTINE IDFFILLCOMMENT2(IDF,STRING)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ CHARACTER(LEN=*),INTENT(IN) :: STRING
+ CHARACTER(LEN=256) :: DATESTRING
+ CHARACTER(LEN=256) :: DEFAULT
+ INTEGER :: I,N
+
+ N=0
+ IF(MOD(LEN(STRING),4).NE.0)N=1
+ N=N+LEN(STRING)/4
+
+ IF(ASSOCIATED(IDF%COMMENT))DEALLOCATE(IDF%COMMENT)
+ ALLOCATE(IDF%COMMENT(N))
+
+ DO I=1,N
+  IDF%COMMENT(I)='    '
+  IDF%COMMENT(I)=STRING(((I-1)*4)+1:MIN(LEN(STRING),I*4))
+ ENDDO
+
+ END SUBROUTINE IDFFILLCOMMENT2
+
+  !###======================================================================
+ SUBROUTINE IDFWRITECOMMENT(IDF,IDATA)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ INTEGER,INTENT(IN) :: IDATA
+ INTEGER :: I
+ INTEGER(KIND=DP_KIND) :: IREC
+ 
+ IF(.NOT.ASSOCIATED(IDF%COMMENT))RETURN
+
+ !## direct mode
+ IF(IDATA.EQ.0)THEN
+  IREC= 11 + ABS(IDF%IEQ-1) * 2 + IDF%IEQ * (IDF%NROW+IDF%NCOL) + IDF%ITB*2 + (IDF%NROW*IDF%NCOL)
+  !## write additional information
+  IREC=IREC+1
+  !## iadit
+  IF(IDF%ITYPE.EQ.4)THEN
+   WRITE(IDF%IU,REC=IREC) 1 
+  ELSEIF(IDF%ITYPE.EQ.8)THEN
+   WRITE(IDF%IU,REC=IREC) 1,0
+  ENDIF
+  IREC=IREC+1
+  IF(IDF%ITYPE.EQ.4)THEN
+   WRITE(IDF%IU,REC=IREC) SIZE(IDF%COMMENT)
+  ELSEIF(IDF%ITYPE.EQ.8)THEN
+   WRITE(IDF%IU,REC=IREC) SIZE(IDF%COMMENT),0
+  ENDIF
+  IF(IDF%ITYPE.EQ.4)THEN
+   DO I=1,SIZE(IDF%COMMENT)
+    IREC=IREC+1
+    WRITE(IDF%IU,REC=IREC) IDF%COMMENT(I)
+   ENDDO
+  ELSEIF(IDF%ITYPE.EQ.8)THEN
+   I=1
+   DO
+    IREC=IREC+1
+    IF(I.EQ.SIZE(IDF%COMMENT))THEN
+     WRITE(IDF%IU,REC=IREC) IDF%COMMENT(I)
+    ELSE
+     WRITE(IDF%IU,REC=IREC) IDF%COMMENT(I),IDF%COMMENT(I+1)
+    ENDIF
+    I=I+2; IF(I.GT.SIZE(IDF%COMMENT))EXIT
+   ENDDO
+  ENDIF 
+ !## stream-mode
+ ELSE
+  IF(IDF%ITYPE.EQ.4)THEN
+   WRITE(IDF%IU) 1
+   WRITE(IDF%IU) SIZE(IDF%COMMENT)
+  ELSEIF(IDF%ITYPE.EQ.8)THEN
+   WRITE(IDF%IU) 1,0
+   WRITE(IDF%IU) SIZE(IDF%COMMENT),0
+  ENDIF
+  DO I=1,SIZE(IDF%COMMENT); WRITE(IDF%IU) IDF%COMMENT(I); ENDDO
+ ENDIF
+
+ END SUBROUTINE IDFWRITECOMMENT
+! 
+! !###======================================================================
+! SUBROUTINE IDFWRITECOMMENT(IDF,IDATA)
+! !###======================================================================
+! IMPLICIT NONE
+! TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+! INTEGER,INTENT(IN) :: IDATA
+! INTEGER :: IREC,I
+!
+! IF(.NOT.ASSOCIATED(IDF%COMMENT))RETURN
+!
+! !## direct mode
+! IF(IDATA.EQ.0)THEN
+!  IREC= 11 + ABS(IDF%IEQ-1) * 2 + IDF%IEQ * (IDF%NROW+IDF%NCOL) + IDF%ITB*2 + (IDF%NROW*IDF%NCOL) + 1
+!  !## write additional information
+!!  IREC=IREC+1
+!  WRITE(IDF%IU,REC=IREC) 1 !## iadit
+!  IREC=IREC+1
+!  WRITE(IDF%IU,REC=IREC) SIZE(IDF%COMMENT)
+!  DO I=1,SIZE(IDF%COMMENT)
+!   IREC=IREC+1
+!   WRITE(IDF%IU,REC=IREC) IDF%COMMENT(I)
+!  ENDDO
+! !## stream-mode
+! ELSE
+!  WRITE(IDF%IU) 1
+!  WRITE(IDF%IU) SIZE(IDF%COMMENT)
+!  DO I=1,SIZE(IDF%COMMENT); WRITE(IDF%IU) IDF%COMMENT(I); ENDDO
+! ENDIF
+!
+! END SUBROUTINE IDFWRITECOMMENT
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFWRITEDATA(IDATA,IDF)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN)  :: IDATA
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ INTEGER :: IROW,ICOL,I
+ REAL(KIND=SP_KIND),ALLOCATABLE,DIMENSION(:,:) :: X
+ REAL(KIND=SP_KIND),ALLOCATABLE,DIMENSION(:) :: V
+
+ IDFWRITEDATA=.TRUE.
+
+ IF(IDF%IU.LE.0)RETURN
+ IF(IDATA.EQ.0)RETURN
+
+ IDFWRITEDATA=.FALSE.
+
+ IF(IDF%IXV.EQ.0)THEN
+
+  IF(IDF%ITYPE.EQ.4)THEN
+   ALLOCATE(X(IDF%NCOL,IDF%NROW))
+   X=REAL(IDF%X,4)
+   WRITE(IDF%IU) ((X(ICOL,IROW),ICOL=1,IDF%NCOL),IROW=1,IDF%NROW)
+   DEALLOCATE(X)
+  ELSE  
+   WRITE(IDF%IU) ((IDF%X(ICOL,IROW),ICOL=1,IDF%NCOL),IROW=1,IDF%NROW)
+  ENDIF
+
+ ELSEIF(IDF%IXV.EQ.1)THEN
+
+  IF(IDF%ITYPE.EQ.4)THEN
+   ALLOCATE(V(IDF%NCOL*IDF%NROW))
+   V=REAL(IDF%V,4)
+   WRITE(IDF%IU) (V(I),I=1,IDF%NCOL*IDF%NROW)
+   DEALLOCATE(V)
+  ELSE  
+   WRITE(IDF%IU) (IDF%V(I),I=1,IDF%NCOL*IDF%NROW)
+  ENDIF
+  
+ ENDIF
+
+ IDFWRITEDATA=.TRUE.
+
+ END FUNCTION IDFWRITEDATA
+
+  !###======================================================================
+ SUBROUTINE IDFGETEDGE(IDF,IROW,ICOL,X1,Y1,X2,Y2)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(IN) :: IDF
+ INTEGER,INTENT(IN) :: IROW,ICOL
+ REAL(KIND=8),INTENT(OUT) :: X1,Y1,X2,Y2
+
+ IF(IDF%IEQ.EQ.0)THEN
+
+  X1=IDF%XMIN+((ICOL-1)*IDF%DX); X2=X1+IDF%DX
+  Y1=IDF%YMAX-((IROW  )*IDF%DY); Y2=Y1+IDF%DY
+
+ ELSEIF(IDF%IEQ.EQ.1)THEN
+
+  X1=IDF%SX(ICOL-1)
+  X2=IDF%SX(ICOL  )
+  Y1=IDF%SY(IROW  )
+  Y2=IDF%SY(IROW-1)
+
+ ENDIF
+
+ END SUBROUTINE IDFGETEDGE
+
+ !###======================================================================
+ REAL(KIND=DP_KIND) FUNCTION IDFGETVAL(IDF,IROW,ICOL)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(IN) :: IDF
+ INTEGER,INTENT(IN) :: IROW,ICOL
+ INTEGER(KIND=DP_KIND) :: IREC
+ REAL(KIND=DP_KIND) :: XVAL
+
+! IREC= 11  +ABS(IDF%IEQ-1) *2    +IDF%IEQ*(IDF%NROW+IDF%NCOL) +IDF%ITB*2
+! IREC=IREC+  ((IROW-1)*IDF%NCOL)+ICOL
+! READ(IDF%IU,REC=IREC) IDFGETVAL
+
+ IREC=11  +ABS(IDF%IEQ-1) *2            &
+          +IDF%IEQ*(IDF%NROW+IDF%NCOL)  &
+          +IDF%ITB*2                    &
+          +((IROW-1)*IDF%NCOL)+ICOL
+
+ IDFGETVAL=IDF%NODATA
+ IF(.NOT.IDFREADREAL(0,IDF%IU,IDF%ITYPE,IREC,XVAL))RETURN
+ IDFGETVAL=XVAL
+  
+ END FUNCTION IDFGETVAL
+
+ !###======================================================================
+ INTEGER FUNCTION IDFGETVAL_CHECK(IDF,IROW,ICOL,IDFVAL)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(IN) :: IDF
+ REAL,INTENT(OUT) :: IDFVAL
+ INTEGER,INTENT(IN) :: IROW,ICOL
+ INTEGER :: IREC
+
+ IREC=ICF +10  +ABS(IDF%IEQ-1) *2    +IDF%IEQ*(IDF%NROW+IDF%NCOL) +IDF%ITB*2
+ IREC=IREC+  ((IROW-1)*IDF%NCOL)+ICOL
+
+ READ(IDF%IU,REC=IREC,IOSTAT=IDFGETVAL_CHECK) IDFVAL
+
+ END FUNCTION IDFGETVAL_CHECK
+
+ !###======================================================================
+ REAL FUNCTION IDFGETAREA(IDF,ICOL,IROW)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(IN) :: IDF
+ INTEGER,INTENT(IN) :: ICOL,IROW
+
+ IF(IDF%IEQ.EQ.0)THEN
+  IDFGETAREA=IDF%DX*IDF%DY
+ ELSE
+  IDFGETAREA=(IDF%SY(IROW-1)-IDF%SY(IROW))* &
+             (IDF%SX(ICOL)  -IDF%SX(ICOL-1))
+ ENDIF
+
+ END FUNCTION IDFGETAREA
+
+ !###======================================================================
+ SUBROUTINE IDFPUTVAL(IDF,IROW,ICOL,IDFVALUE)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(IN) :: IDF
+ REAL(KIND=DP_KIND),INTENT(IN) :: IDFVALUE
+ INTEGER,INTENT(IN) :: IROW,ICOL
+ REAL(KIND=4) :: X
+ INTEGER(KIND=DP_KIND) :: IREC
+ 
+ IREC=11  +ABS(IDF%IEQ-1) *2    +IDF%IEQ*(IDF%NROW+IDF%NCOL) +IDF%ITB*2
+ IREC=IREC+  ((IROW-1)*IDF%NCOL)+ICOL
+
+ X=REAL(IDFVALUE,4)
+ WRITE(IDF%IU,REC=IREC) X
+
+ END SUBROUTINE IDFPUTVAL
+
+  !###======================================================================
+ LOGICAL FUNCTION IDFREADDIM(IDATA,IDF)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN)  :: IDATA
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ INTEGER :: I,IOS
+ INTEGER(KIND=1) :: I1,I2,I3,I4
+ INTEGER(KIND=DP_KIND) :: IREC
+ 
+ IDFREADDIM=.FALSE.
+
+ IF(IDF%IU.LE.0)RETURN
+
+ IF(IDATA.EQ.1)THEN
+  IF(IDF%ITYPE.EQ.4)READ(IDF%IU,IOSTAT=IOS) I     !header: 1271
+  IF(IDF%ITYPE.EQ.8)READ(IDF%IU,IOSTAT=IOS) I,I   !header: 1271
+ ENDIF
+ 
+ IF(.NOT.IDFREADINTEGER(IDATA,IDF%IU,IDF%ITYPE,2,IDF%NCOL))  RETURN
+ IF(.NOT.IDFREADINTEGER(IDATA,IDF%IU,IDF%ITYPE,3,IDF%NROW))  RETURN
+
+ IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,4,IDF%XMIN))  RETURN
+ IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,5,IDF%XMAX))  RETURN
+ IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,6,IDF%YMIN))  RETURN
+ IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,7,IDF%YMAX))  RETURN
+  
+ IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,8,IDF%DMIN))  RETURN
+ IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,9,IDF%DMAX))  RETURN
+ IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,10,IDF%NODATA))RETURN
+
+ IF(IDATA.EQ.0)THEN
+  IF(IDF%ITYPE.EQ.4)READ(IDF%IU,REC=11,IOSTAT=IOS) I1,I2,I3,I4     
+  IF(IDF%ITYPE.EQ.8)READ(IDF%IU,REC=11,IOSTAT=IOS) I1,I2,I3,I4,I   
+ ELSEIF(IDATA.EQ.1)THEN
+  IF(IDF%ITYPE.EQ.4)READ(IDF%IU,       IOSTAT=IOS) I1,I2,I3,I4     
+  IF(IDF%ITYPE.EQ.8)READ(IDF%IU,       IOSTAT=IOS) I1,I2,I3,I4,I   
+ ENDIF
+
+ IDF%IEQ=MIN(1,MAX(0,INT(I1)))
+ IDF%ITB=MIN(1,MAX(0,INT(I2)))
+
+ IF(IDF%IEQ.EQ.0)THEN
+  
+  IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,12,IDF%DX))  RETURN
+  IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,13,IDF%DY))  RETURN
+  I=14
+
+ ELSE
+  
+  I=12
+  
+ ENDIF
+
+ IF(IDF%ITB.EQ.1)THEN
+
+  IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,INT(I,8)  ,IDF%TOP))  RETURN
+  IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,INT(I+1,8),IDF%BOT))  RETURN
+
+ ENDIF
+
+ !## non-equidistantial grid
+ IF(IDF%IEQ.EQ.1)THEN
+
+  CALL IDFDEALLOCATEX(IDF)
+
+  IF(.NOT.IDFALLOCATESXY(IDF))RETURN
+
+  IREC=11+IDF%ITB*2
+  DO I=1,IDF%NCOL
+   IREC=IREC+1
+   IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,IREC,IDF%SX(I)))  RETURN
+  END DO
+  DO I=1,IDF%NROW
+   IREC=IREC+1
+   IF(.NOT.IDFREADREAL   (IDATA,IDF%IU,IDF%ITYPE,IREC,IDF%SY(I)))  RETURN
+  END DO
+
+  !## minimal cell-sizes
+  IDF%DX=MINVAL(IDF%SX(1:IDF%NCOL))
+  IDF%DY=MINVAL(IDF%SY(1:IDF%NROW))
+
+  IDF%SX(0)=IDF%XMIN
+  DO I=1,IDF%NCOL
+   IDF%SX(I)=IDF%SX(I-1)+IDF%SX(I)
+  END DO
+  IDF%SY(0)=IDF%YMAX
+  DO I=1,IDF%NROW
+   IDF%SY(I)=IDF%SY(I-1)-IDF%SY(I)
+  END DO                       
+
+ ENDIF
+
+ IDFREADDIM=.TRUE.
+
+ END FUNCTION IDFREADDIM
+
+ !###======================================================================
+ LOGICAL FUNCTION ASCREADDATA(IDF)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(OUT) :: IDF
+ INTEGER :: I,ICOL,IROW
+ INTEGER,DIMENSION(6) :: IOS
+ CHARACTER(LEN=16),DIMENSION(6) :: TXT
+
+ ASCREADDATA=.FALSE.
+
+ IF(IDF%IU.LE.0)RETURN
+
+ READ(IDF%IU,*,IOSTAT=IOS(1))   TXT(1),IDF%NCOL
+ READ(IDF%IU,*,IOSTAT=IOS(2))   TXT(2),IDF%NROW
+
+ READ(IDF%IU,*,IOSTAT=IOS(3))   TXT(3),IDF%XMIN
+ !## xllcenter-xllcorner
+ CALL IMOD_UTL_S_CAP(TXT(3),'U')
+
+ READ(IDF%IU,*,IOSTAT=IOS(4))   TXT(4),IDF%YMIN
+ !## recompute yllcenter-yllcorner
+ CALL IMOD_UTL_S_CAP(TXT(4),'U')
+
+ READ(IDF%IU,*,IOSTAT=IOS(5))   TXT(5),IDF%DX
+ READ(IDF%IU,*,IOSTAT=IOS(6))   TXT(6),IDF%NODATA
+
+ IF(SUM(IOS).NE.0)THEN
+  WRITE(*,*) 'Error reading header of ascii file!'
+  RETURN
+ ENDIF
+
+ IF(TRIM(TXT(3)).EQ.'XLLCENTER')IDF%XMIN=IDF%XMIN-(IDF%DX/2.0)
+ IF(TRIM(TXT(4)).EQ.'YLLCENTER')IDF%YMIN=IDF%YMIN-(IDF%DX/2.0)
+ IDF%YMAX=IDF%YMIN+IDF%NROW*IDF%DX
+ IDF%XMAX=IDF%XMIN+IDF%NCOL*IDF%DX
+
+ IDF%IEQ   =0
+ IDF%DY    =IDF%DX
+ IDF%IXV   =0
+ IDF%ITB   =0
+
+ IF(.NOT.IDFALLOCATEX(IDF))THEN
+  WRITE(*,*) 'Error, iMOD can not allocate enough memory to read the ascii file!'
+  RETURN
+ ENDIF
+
+ IOS=0
+ READ(IDF%IU,*,IOSTAT=IOS(1)) ((IDF%X(ICOL,IROW),ICOL=1,IDF%NCOL),IROW=1,IDF%NROW)
+ IF(IOS(1).NE.0)THEN
+  WRITE(*,*) 'Error reading data block of ascii file!'
+  RETURN
+ ENDIF
+
+ ASCREADDATA=.TRUE.
+
+ END FUNCTION ASCREADDATA
+
+  !###======================================================================
+ LOGICAL FUNCTION IDFWRITEDIM(IDATA,IDF)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN) :: IDATA
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ INTEGER :: I,J,IOS
+ INTEGER(KIND=DP_KIND) :: IREC
+ 
+ IDFWRITEDIM=.FALSE.
+
+ IF(IDF%IU.LE.0)RETURN
+
+ IF(IDF%IXV.EQ.0.AND.ASSOCIATED(IDF%X))THEN
+  IDF%DMIN= 10.0D10; IDF%DMAX=-10.0D10
+  DO I=1,SIZE(IDF%X,2); DO J=1,SIZE(IDF%X,1)
+   IF(IDF%X(J,I).NE.IDF%NODATA)THEN
+    IDF%DMIN=MIN(IDF%DMIN,IDF%X(J,I))
+    IDF%DMAX=MAX(IDF%DMAX,IDF%X(J,I))
+   ENDIF
+  END DO; END DO
+ ELSEIF(IDF%IXV.EQ.1.AND.ASSOCIATED(IDF%V))THEN
+  IDF%DMIN= 10.0D10; IDF%DMAX=-10.0D10
+  DO I=1,SIZE(IDF%X,1)*SIZE(IDF%X,2) 
+   IF(IDF%V(I).NE.IDF%NODATA)THEN
+    IDF%DMIN=MIN(IDF%DMIN,IDF%V(I))
+    IDF%DMAX=MAX(IDF%DMAX,IDF%V(I))
+   ENDIF
+  END DO
+ ENDIF
+
+ !## make sure
+ IDF%ITB=MAX(MIN(IDF%ITB,1),0)
+ IDF%IEQ=MAX(MIN(IDF%IEQ,1),0)
+ 
+ I=UTL_PUTRECORDLENGTH(IDF%ITYPE)
+ IF(.NOT.IDFWRITEINTEGER(IDATA,IDF%IU,IDF%ITYPE,1 ,I         ))RETURN
+ IF(.NOT.IDFWRITEINTEGER(IDATA,IDF%IU,IDF%ITYPE,2 ,IDF%NCOL  ))RETURN
+ IF(.NOT.IDFWRITEINTEGER(IDATA,IDF%IU,IDF%ITYPE,3 ,IDF%NROW  ))RETURN
+ IF(.NOT.IDFWRITEREAL   (IDATA,IDF%IU,IDF%ITYPE,4 ,IDF%XMIN  ))RETURN
+ IF(.NOT.IDFWRITEREAL   (IDATA,IDF%IU,IDF%ITYPE,5 ,IDF%XMAX  ))RETURN
+ IF(.NOT.IDFWRITEREAL   (IDATA,IDF%IU,IDF%ITYPE,6 ,IDF%YMIN  ))RETURN
+ IF(.NOT.IDFWRITEREAL   (IDATA,IDF%IU,IDF%ITYPE,7 ,IDF%YMAX  ))RETURN
+ IF(.NOT.IDFWRITEREAL   (IDATA,IDF%IU,IDF%ITYPE,8 ,IDF%DMIN  ))RETURN
+ IF(.NOT.IDFWRITEREAL   (IDATA,IDF%IU,IDF%ITYPE,9 ,IDF%DMAX  ))RETURN
+ IF(.NOT.IDFWRITEREAL   (IDATA,IDF%IU,IDF%ITYPE,10,IDF%NODATA))RETURN
+
+ IF(IDATA.EQ.0)THEN
+  IF(IDF%ITYPE.EQ.4)WRITE(IDF%IU,REC=11,IOSTAT=IOS) INT(IDF%IEQ,1),INT(IDF%ITB,1),INT(0,1),INT(0,1)
+  IF(IDF%ITYPE.EQ.8)WRITE(IDF%IU,REC=11,IOSTAT=IOS) INT(IDF%IEQ,1),INT(IDF%ITB,1),INT(0,1),INT(0,1),I
+ ELSEIF(IDATA.EQ.1)THEN
+  IF(IDF%ITYPE.EQ.4)WRITE(IDF%IU,       IOSTAT=IOS) INT(IDF%IEQ,1),INT(IDF%ITB,1),INT(0,1),INT(0,1)    
+  IF(IDF%ITYPE.EQ.8)WRITE(IDF%IU,       IOSTAT=IOS) INT(IDF%IEQ,1),INT(IDF%ITB,1),INT(0,1),INT(0,1),I
+ ENDIF
+
+ !## equidistantial raster
+ IF(IDF%IEQ.EQ.0)THEN
+  
+  IF(.NOT.IDFWRITEREAL(IDATA,IDF%IU,IDF%ITYPE,12,IDF%DX))RETURN
+  IF(.NOT.IDFWRITEREAL(IDATA,IDF%IU,IDF%ITYPE,13,IDF%DY))RETURN
+  I=14
+ ELSE
+  I=12  
+ ENDIF
+  
+ IF(IDF%ITB.EQ.1)THEN
+  IF(.NOT.IDFWRITEREAL(IDATA,IDF%IU,IDF%ITYPE,INT(I,8)  ,IDF%TOP))RETURN
+  IF(.NOT.IDFWRITEREAL(IDATA,IDF%IU,IDF%ITYPE,INT(I+1,8),IDF%BOT))RETURN
+ ENDIF
+
+ !## non-equidistantial grid
+ IF(IDF%IEQ.EQ.1)THEN
+
+  IREC=12+IDF%ITB*2
+  DO I=1,IDF%NCOL
+   IREC=IREC+1
+   IF(.NOT.IDFWRITEREAL(IDATA,IDF%IU,IDF%ITYPE,IREC,IDF%SX(I)-IDF%SX(I-1)))RETURN
+  END DO
+  DO I=1,IDF%NROW
+   IREC=IREC+1
+   IF(.NOT.IDFWRITEREAL(IDATA,IDF%IU,IDF%ITYPE,IREC,IDF%SY(I-1)-IDF%SY(I)))RETURN
+  END DO
+ 
+ ENDIF
+ 
+ IDFWRITEDIM=.TRUE.
+
+ END FUNCTION IDFWRITEDIM
+ 
+ !###======================================================================
+ LOGICAL FUNCTION IDFREADREAL(IDATA,IU,ITYPE,IREC,DVAL)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN) :: IDATA,IU,ITYPE
+ INTEGER(KIND=DP_KIND),INTENT(IN) :: IREC
+ REAL(KIND=DP_KIND),INTENT(OUT) :: DVAL
+ INTEGER :: IOS
+ REAL(KIND=SP_KIND) :: RVAL
+  
+ IDFREADREAL=.FALSE.
+
+ IF(ITYPE.EQ.4)THEN
+  IF(IDATA.EQ.0)READ(IU,REC=IREC,IOSTAT=IOS) RVAL
+  IF(IDATA.EQ.1)READ(IU,         IOSTAT=IOS) RVAL
+  DVAL=DBLE(RVAL)
+ ELSEIF(ITYPE.EQ.8)THEN
+  IF(IDATA.EQ.0)READ(IU,REC=IREC,IOSTAT=IOS) DVAL
+  IF(IDATA.EQ.1)READ(IU,         IOSTAT=IOS) DVAL
+ ENDIF
+ 
+ IF(IOS.EQ.0)IDFREADREAL=.TRUE.
+ 
+ END FUNCTION IDFREADREAL
+ 
+ !###======================================================================
+ LOGICAL FUNCTION IDFWRITEREAL(IDATA,IU,ITYPE,IREC,DVAL)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN) :: IDATA,IU,ITYPE
+ INTEGER(KIND=DP_KIND),INTENT(IN) :: IREC
+ REAL(KIND=DP_KIND),INTENT(IN) :: DVAL
+ INTEGER :: IOS
+ REAL(KIND=SP_KIND) :: RVAL
+  
+ IDFWRITEREAL=.FALSE.
+
+ IF(ITYPE.EQ.4)THEN
+  RVAL=REAL(DVAL,4)
+  IF(IDATA.EQ.0)WRITE(IU,REC=IREC,IOSTAT=IOS) RVAL
+  IF(IDATA.EQ.1)WRITE(IU,         IOSTAT=IOS) RVAL
+ ELSEIF(ITYPE.EQ.8)THEN
+  IF(IDATA.EQ.0)WRITE(IU,REC=IREC,IOSTAT=IOS) DVAL
+  IF(IDATA.EQ.1)WRITE(IU,         IOSTAT=IOS) DVAL
+ ENDIF
+ 
+ IF(IOS.EQ.0)IDFWRITEREAL=.TRUE.
+ 
+ END FUNCTION IDFWRITEREAL
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFREADINTEGER(IDATA,IU,ITYPE,IREC,IVAL)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN) :: IDATA,IU,ITYPE
+ INTEGER(KIND=DP_KIND),INTENT(IN) :: IREC
+ INTEGER,INTENT(OUT) :: IVAL
+ INTEGER :: I,IOS
+  
+ IDFREADINTEGER=.FALSE.
+
+ IF(ITYPE.EQ.4)THEN
+  IF(IDATA.EQ.0)READ(IU,REC=IREC,IOSTAT=IOS) IVAL
+  IF(IDATA.EQ.1)READ(IU,         IOSTAT=IOS) IVAL
+ ELSEIF(ITYPE.EQ.8)THEN
+  IF(IDATA.EQ.0)READ(IU,REC=IREC,IOSTAT=IOS) IVAL
+  IF(IDATA.EQ.1)READ(IU,         IOSTAT=IOS) IVAL,I
+ ENDIF
+ 
+ IF(IOS.EQ.0)IDFREADINTEGER=.TRUE.
+ 
+ END FUNCTION IDFREADINTEGER
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFWRITEINTEGER(IDATA,IU,ITYPE,IREC,IVAL)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN) :: IDATA,IU,ITYPE
+ INTEGER(KIND=DP_KIND),INTENT(IN) :: IREC
+ INTEGER,INTENT(IN) :: IVAL
+ INTEGER :: IOS
+  
+ IDFWRITEINTEGER=.FALSE.
+
+ IF(ITYPE.EQ.4)THEN
+  IF(IDATA.EQ.0)WRITE(IU,REC=IREC,IOSTAT=IOS) IVAL
+  IF(IDATA.EQ.1)WRITE(IU,         IOSTAT=IOS) IVAL
+ ELSEIF(ITYPE.EQ.8)THEN
+  IF(IDATA.EQ.0)WRITE(IU,REC=IREC,IOSTAT=IOS) IVAL
+  IF(IDATA.EQ.1)WRITE(IU,         IOSTAT=IOS) IVAL,INT(0,4)
+ ENDIF
+ 
+ IF(IOS.EQ.0)IDFWRITEINTEGER=.TRUE.
+ 
+ END FUNCTION IDFWRITEINTEGER
+ 
+ !###======================================================================
+ SUBROUTINE IDFCOPY(IDF1,IDF2)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(IN) :: IDF1
+ TYPE(IDFOBJ),INTENT(OUT) :: IDF2
+
+ IDF2%NCOL  =IDF1%NCOL
+ IDF2%NROW  =IDF1%NROW
+ IDF2%XMIN  =IDF1%XMIN
+ IDF2%XMAX  =IDF1%XMAX
+ IDF2%YMIN  =IDF1%YMIN
+ IDF2%YMAX  =IDF1%YMAX
+ IDF2%DX    =IDF1%DX
+ IDF2%DY    =IDF1%DY
+ IDF2%IXV   =IDF1%IXV
+ IDF2%ITB   =IDF1%ITB
+ IDF2%UNITS =IDF1%UNITS
+ IDF2%IEQ   =IDF1%IEQ
+ IDF2%NODATA=0.0
+ IDF2%DMIN  =0.0
+ IDF2%DMAX  =1.0
+ IF(.NOT.IDFALLOCATESXY(IDF2))RETURN
+ IF(IDF2%IEQ.EQ.1)THEN
+  IDF2%SX=IDF1%SX
+  IDF2%SY=IDF1%SY
+ ENDIF
+ !## allocate memory x/v/ysel/ithrd
+ IF(.NOT.IDFALLOCATEX(IDF2))RETURN
+ IF(IDF2%IXV.EQ.2)IDF2%NTHREAD=0
+
+ END SUBROUTINE IDFCOPY
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFALLOCATESXY(IDF)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ INTEGER,DIMENSION(2) :: IOS
+
+ IDFALLOCATESXY=.FALSE.
+
+ IF(ASSOCIATED(IDF%SX))DEALLOCATE(IDF%SX)
+ IF(ASSOCIATED(IDF%SY))DEALLOCATE(IDF%SY)
+ NULLIFY(IDF%SX); NULLIFY(IDF%SY)
+
+ ALLOCATE(IDF%SX(0:IDF%NCOL),STAT=IOS(1))
+ ALLOCATE(IDF%SY(0:IDF%NROW),STAT=IOS(2))
+
+ IF(SUM(IOS).NE.0)THEN
+  WRITE(*,*) 'Can not allocate enough memory to store sx/sy data'
+  RETURN
+ ENDIF
+
+ IDFALLOCATESXY=.TRUE.
+
+ END FUNCTION IDFALLOCATESXY
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFALLOCATEX(IDF)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ INTEGER :: IOS
+
+ IDFALLOCATEX=.FALSE.
+
+ IF(IDF%IXV.EQ.0)THEN
+  IF(ASSOCIATED(IDF%X))THEN
+   IF(SIZE(IDF%X,1).NE.IDF%NCOL.OR.SIZE(IDF%X,2).EQ.IDF%NROW)THEN
+    DEALLOCATE(IDF%X)
+   ENDIF
+  ENDIF
+  IF(.NOT.ASSOCIATED(IDF%X))THEN
+   NULLIFY(IDF%X)
+   ALLOCATE(IDF%X(IDF%NCOL,IDF%NROW),STAT=IOS)
+  ENDIF
+ ELSEIF(IDF%IXV.EQ.1)THEN
+  IF(ASSOCIATED(IDF%V))THEN
+   IF(SIZE(IDF%V).NE.IDF%NCOL*IDF%NROW)THEN
+    DEALLOCATE(IDF%V)
+   ENDIF
+  ENDIF
+  IF(.NOT.ASSOCIATED(IDF%V))THEN
+   NULLIFY(IDF%V)
+   ALLOCATE(IDF%V(IDF%NCOL*IDF%NROW),STAT=IOS)
+  ENDIF
+ ELSEIF(IDF%IXV.EQ.2)THEN
+  IF(ASSOCIATED(IDF%YSEL))THEN
+   IF(SIZE(IDF%YSEL,1).NE.2.AND.SIZE(IDF%YSEL,2).NE.IDF%NCOL*IDF%NROW)THEN
+    DEALLOCATE(IDF%YSEL)
+   ENDIF
+  ENDIF
+  IF(.NOT.ASSOCIATED(IDF%YSEL))THEN
+   NULLIFY(IDF%YSEL)
+   ALLOCATE(IDF%YSEL(2,IDF%NCOL*IDF%NROW),STAT=IOS)
+  ENDIF
+ ELSE
+  CALL IDFDEALLOCATEX(IDF)
+  WRITE(*,*) 'Can not recognize ixv variable within IDF-object'
+  RETURN
+ ENDIF
+
+ IF(IOS.NE.0)THEN
+  CALL IDFDEALLOCATEX(IDF)
+  WRITE(*,*) 'Can not allocate enough memory to store entire IDF (ncol='//TRIM(ITOS(IDF%NCOL))// &
+    ';nrow='//TRIM(ITOS(IDF%NROW))
+  RETURN
+ ENDIF
+
+ IDFALLOCATEX=.TRUE.
+
+ END FUNCTION IDFALLOCATEX
+
+ !###======================================================================
+ SUBROUTINE IDFDEALLOCATE(IDF,NIDF)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(IN) :: NIDF
+ TYPE(IDFOBJ),DIMENSION(NIDF),INTENT(INOUT) :: IDF
+ INTEGER :: I
+ LOGICAL :: LEX
+
+ DO I=1,SIZE(IDF)
+  CALL IDFDEALLOCATEX(IDF(I))
+  IF(IDF(I)%IU.GT.0)THEN
+   INQUIRE(UNIT=IDF(I)%IU,OPENED=LEX)
+   IF(LEX)CLOSE(IDF(I)%IU)
+   IDF(I)%IU=0
+  ENDIF
+ END DO
+
+ END SUBROUTINE IDFDEALLOCATE
+
+ !###======================================================================
+ SUBROUTINE IDFDEALLOCATEX(IDF)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+
+ !## deallocate sx
+ IF(ASSOCIATED(IDF%SX))DEALLOCATE(IDF%SX)
+ NULLIFY(IDF%SX)
+ !## deallocate sy
+ IF(ASSOCIATED(IDF%SY))DEALLOCATE(IDF%SY)
+ NULLIFY(IDF%SY)
+ !## deallocate x
+ IF(ASSOCIATED(IDF%X))DEALLOCATE(IDF%X)
+ NULLIFY(IDF%X)
+ !## deallocate v
+ IF(ASSOCIATED(IDF%V))DEALLOCATE(IDF%V)
+ NULLIFY(IDF%V)
+ !## deallocate ysel
+ IF(ASSOCIATED(IDF%YSEL))DEALLOCATE(IDF%YSEL)
+ NULLIFY(IDF%YSEL)
+ !## deallocate comment
+ IF(ASSOCIATED(IDF%COMMENT))DEALLOCATE(IDF%COMMENT)
+ NULLIFY(IDF%COMMENT)
+
+ END SUBROUTINE IDFDEALLOCATEX
+
+ !###======================================================================
+ SUBROUTINE IDFNULLIFY(IDF)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+
+ NULLIFY(IDF%X)
+ NULLIFY(IDF%V)
+ NULLIFY(IDF%SX)
+ NULLIFY(IDF%SY)
+ NULLIFY(IDF%YSEL)
+ NULLIFY(IDF%COMMENT)
+ IDF%IEQ= 0
+ IDF%IXV= 0
+ IDF%ITB= 0
+ IDF%JD=  0
+ IDF%ILAY=0
+ IDF%TOP= 0.0D0
+ IDF%BOT= 0.0D0
+ IDF%NTHREAD=0
+ IDF%DAYFRACTION=1.0D0
+ IDF%ITYPE=4
+
+ END SUBROUTINE IDFNULLIFY
+
+ !###======================================================================
+ SUBROUTINE IDFGETILAY(IDF,IDFNAME)
+ !###======================================================================
+ IMPLICIT NONE
+ TYPE(IDFOBJ),INTENT(INOUT) :: IDF
+ CHARACTER(LEN=*),INTENT(IN) :: IDFNAME
+ INTEGER :: I,J,ILAY,IOS
+
+ IDF%ILAY=0
+
+ !## get layer
+ I=INDEX(IMOD_UTL_CAPF(IDFNAME,'U'),'L',.TRUE.)+1
+ J=INDEX(IMOD_UTL_CAPF(IDFNAME,'U'),'.IDF',.TRUE.)-1
+ !## not proper file-name format
+ IF(J.GE.I)THEN
+  READ(IDFNAME(I:J),*,IOSTAT=IOS) ILAY
+  IF(IOS.EQ.0)IDF%ILAY=ILAY
+ ENDIF
+
+ END SUBROUTINE IDFGETILAY
+
+ !###======================================================================
+ LOGICAL FUNCTION IDFOPEN(IU,IDFNAME,IDFTYPE,TSTAT,IDATA,IQUESTION)
+ !###======================================================================
+ IMPLICIT NONE
+ INTEGER,INTENT(OUT) :: IU
+ INTEGER,INTENT(IN) :: IDATA
+ INTEGER,INTENT(INOUT) :: IDFTYPE
+ INTEGER,INTENT(IN),OPTIONAL :: IQUESTION
+ CHARACTER(LEN=*),INTENT(IN) :: IDFNAME,TSTAT
+ INTEGER :: RECLEN,I,IOS,IQ
+ LOGICAL :: LEX,LOPEN
+ CHARACTER(LEN=100) :: MSG
+ CHARACTER(LEN=25) :: TACTION
+ CHARACTER(LEN=1) :: YN
+
+ IF(TSTAT(1:1).NE.'W'.AND.TSTAT(1:1).NE.'R')THEN
+  WRITE(*,*) 'Opening Status [ '//TRIM(TSTAT)//' ] not recognized'
+  RETURN
+ ENDIF
+
+ IDFOPEN=.FALSE.
+
+ IF(PRESENT(IQUESTION))IQ=IQUESTION
+
+ IU=0
+
+ IF(LEN_TRIM(IDFNAME).EQ.0)THEN
+  WRITE(*,*) 'No IDF filename given!'
+  RETURN
+ ENDIF
+
+ INQUIRE(FILE=IDFNAME,EXIST=LOPEN)
+ IF(LOPEN) THEN
+  INQUIRE(FILE=IDFNAME,OPENED=LOPEN)
+ ENDIF
+ IF(LOPEN)THEN
+
+  !## check opening action to be similar
+  INQUIRE(FILE=IDFNAME,ACTION=TACTION)
+  LEX=.FALSE.
+  SELECT CASE (TRIM(TACTION))
+   CASE ('READ')
+    IF(TSTAT(1:1).EQ.'R')LEX=.TRUE.
+   CASE ('WRITE')
+    IF(TSTAT(1:1).EQ.'W')LEX=.TRUE.
+   CASE ('READWRITE')
+    IF(LEN_TRIM(TSTAT).EQ.2)LEX=.TRUE.
+  END SELECT
+
+  IF(LEX)THEN
+   INQUIRE(FILE=IDFNAME,NUMBER=IU)
+   IF(IDATA.EQ.0)THEN
+    IDFOPEN=.TRUE.
+    RETURN
+   ELSEIF(IDATA.EQ.1)THEN
+    CLOSE(IU)
+   ENDIF
+  ELSE
+   CLOSE(IU)
+  ENDIF
+ ENDIF
+
+ IF(TSTAT(1:1).EQ.'R')THEN  !## read
+  INQUIRE(FILE=IDFNAME,EXIST=LEX)
+  IF(.NOT.LEX)THEN
+   WRITE(*,*) 'Cannot find '//TRIM(IDFNAME)
+   RETURN
+  ENDIF
+ ELSEIF(TSTAT(1:1).EQ.'W')THEN !## write
+  INQUIRE(FILE=IDFNAME,EXIST=LEX)
+  IF(IQ.EQ.1.AND.LEX)THEN
+   WRITE(*,'(1X,A$)') TRIM(IDFNAME)//' exists, overwrite it?'
+   READ(*,*) YN
+   IF(YN.NE.'Y'.AND.YN.NE.'y')RETURN
+  ENDIF
+ ENDIF
+
+ IU=GETUNIT()
+ IF(TSTAT(1:1).EQ.'R')THEN
+ 
+  !## get idftype 0/1
+  IDFTYPE=UTL_GETRECORDLENGTH(IDFNAME) 
+  RECLEN=IDFTYPE/4
+
+  IF(IDATA.EQ.1)THEN
+ 
+   OPEN(IU,FILE=IDFNAME,STATUS='OLD',FORM='UNFORMATTED',ACCESS='STREAM', &
+                 ACTION='READ',IOSTAT=IOS)
+ 
+  ELSEIF(IDATA.EQ.0)THEN
+ 
+   !## read only
+   IF(LEN_TRIM(TSTAT).EQ.1)THEN
+    OPEN(IU,FILE=IDFNAME,STATUS='OLD',FORM='UNFORMATTED',ACCESS='DIRECT', &
+                  RECL=RECLEN,ACTION='READ',IOSTAT=IOS)
+   ELSE
+    !## read only
+    IF(TSTAT.EQ.'RO')THEN
+     OPEN(IU,FILE=IDFNAME,STATUS='OLD',FORM='UNFORMATTED',ACCESS='DIRECT', &
+                   RECL=RECLEN,ACTION='READ',IOSTAT=IOS)
+    !## read/write
+    ELSEIF(TSTAT.EQ.'RW')THEN
+     OPEN(IU,FILE=IDFNAME,STATUS='OLD',FORM='UNFORMATTED',ACCESS='DIRECT', &
+                   RECL=RECLEN,ACTION='READWRITE',IOSTAT=IOS)
+    ENDIF
+   ENDIF
+ 
+  ENDIF
+  
+ ELSEIF(TSTAT(1:1).EQ.'W')THEN
+ 
+  !## set recordlength in words (bytes/4)
+  RECLEN=IDFTYPE/4
+
+  IF(IDATA.EQ.1)THEN
+  
+   OPEN(IU,FILE=IDFNAME,STATUS='REPLACE',ACTION='WRITE',ACCESS='STREAM',IOSTAT=IOS,FORM='UNFORMATTED')
+   
+  ELSEIF(IDATA.EQ.0)THEN
+  
+   OPEN(IU,FILE=IDFNAME,STATUS='REPLACE',ACTION='READWRITE',ACCESS='DIRECT', &
+                 RECL=RECLEN,IOSTAT=IOS,FORM='UNFORMATTED')
+                 
+  ENDIF
+  IF(IOS.NE.0)IU=0
+ ENDIF
+
+ IF(IOS.NE.0)THEN
+  I=INDEX(IDFNAME,'/')
+  IF(I.NE.0)MSG=TRIM(MSG)//'"/" inside filename!'
+  WRITE(*,*) 'Error opening '//TRIM(IDFNAME)//CHAR(13)//'Status: '//TRIM(MSG)
+  RETURN
+ ENDIF
+
+ IDFOPEN=.TRUE.
+
+ END FUNCTION IDFOPEN
+
+END MODULE IMOD_IDF
