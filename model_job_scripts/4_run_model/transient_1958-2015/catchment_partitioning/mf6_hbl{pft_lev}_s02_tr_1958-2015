@@ -1,0 +1,25 @@
+#!/bin/bash
+#SBATCH --partition=thin
+#SBATCH --exclusive
+#SBATCH --nodes=3
+#SBATCH --ntasks-per-node=32
+#SBATCH --time=30:00:00
+#SBATCH --output=mf6_hbl{pft_lev}_s02_tr_1958-2015_%j.out
+#SBATCH --error=mf6_hbl{pft_lev}_s02_tr_1958-2015_%j.err
+
+# load modules
+module load 2021
+module load iimpi/2021a
+
+sol=s02
+mod=glob_hbl{pft_lev}_tr_1958-2015
+
+dir={globgm_dir}/mf6_mod/${mod}/solutions/run_output/
+exe={bin_dir}/mf6
+nam1=${sol}.par.mfsim.spu.nam
+nam2=${sol}.par.mfsim.ic_spu.nam
+
+cd ${dir}
+
+srun ${exe} -s ../run_input/${nam1}
+srun ${exe} -s ../run_input/${nam2}

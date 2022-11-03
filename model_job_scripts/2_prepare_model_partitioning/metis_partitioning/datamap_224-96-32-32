@@ -1,0 +1,22 @@
+#!/bin/bash
+#SBATCH --partition=thin
+#SBATCH --exclusive
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=00:10:00
+#SBATCH --output=datamap_224-96-32-32_%j.out
+#SBATCH --error=datamap_224-96-32-32_%j.err
+
+exe={bin_dir}/datamap
+out_pref=./map_glob_metis_224-96-32-32
+cat={yoda_input}/metis_224_96_32_32.idf
+d={yoda_input}/d_top_2.idf
+top={yoda_input}/tile_163.txt
+til={yoda_input}/tile_15def_idf/tile_
+
+mkdir {globgm_dir}
+cd {globgm_dir}
+mkdir ./mf6_map/
+cd ./mf6_map/
+
+${exe} 1 ${out_pref} ${cat} ${d} ${top} ${til}

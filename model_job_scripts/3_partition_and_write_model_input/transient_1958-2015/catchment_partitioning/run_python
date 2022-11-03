@@ -1,0 +1,53 @@
+#!/bin/bash
+
+#python write_tr_mf6ggm_hbl.py 0 12   1  32 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12  33  64 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12  65  96 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12  97 128 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12 129 160 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12 161 192 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12 193 224 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12 225 256 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12 257 288 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12 289 320 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 12 321 352 01:30:00
+#python write_tr_mf6ggm_hbl.py 1 12 353 384 24:00:00
+
+#python write_tr_mf6ggm_hbl.py 0 8   1  32 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8  33  64 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8  65  96 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8  97 128 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8 129 160 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8 161 192 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8 193 224 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8 225 256 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8 257 288 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8 289 320 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 8 321 352 01:30:00
+#python write_tr_mf6ggm_hbl.py 1 8 353 384 24:00:00
+
+#python write_tr_mf6ggm_hbl.py 0 6   1  32 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6  33  64 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6  65  96 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6  97 128 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6 129 160 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6 161 192 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6 193 224 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6 225 256 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6 257 288 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6 289 320 01:30:00
+#python write_tr_mf6ggm_hbl.py 0 6 321 352 01:30:00
+#python write_tr_mf6ggm_hbl.py 1 6 353 384 24:00:00
+
+python write_tr_mf6ggm_hbl.py 0 5   1  32 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5  33  64 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5  65  96 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5  97 128 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5 129 160 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5 161 192 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5 193 224 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5 225 256 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5 257 288 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5 289 320 01:30:00
+python write_tr_mf6ggm_hbl.py 0 5 321 352 01:30:00
+python write_tr_mf6ggm_hbl.py 1 5 353 384 24:00:00

@@ -1,0 +1,29 @@
+#!/bin/bash
+#SBATCH --partition=thin
+#SBATCH --exclusive
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=08:00:00
+#SBATCH --output=tr_127-140_%j.out
+#SBATCH --error=tr_127-140_%j.err
+
+
+conda activate pcrglobwb_python3
+
+cd {git_dir}/model_tools_src/python/pcr-globwb
+
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_127-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_128-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_129-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_130-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_131-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_132-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_133-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_134-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_135-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_136-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_137-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_138-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_139-163 &
+python deterministic_runner_for_offline_monthly_modflow.py transient_config.ini debug transient tile_140-163 &
+wait

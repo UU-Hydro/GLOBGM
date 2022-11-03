@@ -1,0 +1,25 @@
+#!/bin/bash
+#SBATCH --partition=thin
+#SBATCH --exclusive
+#SBATCH --nodes=7
+#SBATCH --ntasks-per-node=32
+#SBATCH --time=20:00:00
+#SBATCH --output=mf6_224-96-32-32_s01_tr_1958-2015_%j.out
+#SBATCH --error=mf6_224-96-32-32_s01_tr_1958-2015_%j.err
+
+# load modules
+module load 2021
+module load iimpi/2021a
+
+sol=s01
+mod=glob_metis_224-96-32-32_tr_1958-2015
+
+dir=./globgm/mf6_mod/${mod}/solutions/run_output/
+exe=./bin/mf6
+nam1=${sol}.par.mfsim.spu.nam
+nam2=${sol}.par.mfsim.ic_spu.nam
+
+cd ${dir}
+
+srun ${exe} -s ../run_input/${nam1}
+srun ${exe} -s ../run_input/${nam2}
