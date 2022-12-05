@@ -12,7 +12,7 @@ PCR-GLOBWB main reference/paper: Sutanudjaja, E. H., van Beek, R., Wanders, N., 
 
 ## Input and output data files (including Yoda access)
 
-The main GLOBGM input and output data files are available through the [Yoda](https://www.uu.nl/en/research/yoda) research data management service:
+The main GLOBGM input and output data files are available through the [Yoda](https://www.uu.nl/en/research/yoda) research data management service. To data corresponding to the GLOBGM v1.0, as used in Verkaik et al. (2022), can be downloaded directly from https://doi.org/10.24416/UU01-44L775. Most recent and future data can be obtained by logging in on Yoda with the guest account:
 
 - URL: https://geo.data.uu.nl/research-globgm/
 - Username: globgm.user@gmail.com
