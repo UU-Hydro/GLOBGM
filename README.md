@@ -12,7 +12,7 @@ PCR-GLOBWB main reference/paper: Sutanudjaja, E. H., van Beek, R., Wanders, N., 
 
 ## Input and output data files (including Yoda access)
 
-The main GLOBGM input and output data files are available through the [Yoda](https://www.uu.nl/en/research/yoda) research data management service. To data corresponding to the GLOBGM v1.0, as used in Verkaik et al. (2022), can be downloaded directly from https://doi.org/10.24416/UU01-44L775. Most recent and future data can be obtained by logging in on Yoda with the guest account:
+The main GLOBGM input and output data files are available through the [Yoda](https://www.uu.nl/en/research/yoda) research data management service. The data corresponding to the GLOBGM v1.0, as used in Verkaik et al. (2022), can be downloaded directly from https://doi.org/10.24416/UU01-44L775. Most recent and future data can be obtained by logging in on Yoda with the guest account:
 
 - URL: https://geo.data.uu.nl/research-globgm/
 - Username: globgm.user@gmail.com
@@ -24,7 +24,7 @@ Note that among the available raster files provided by Yoda, there are files wit
 
 For the 'Write Tiled Parameter Data' pre-processing, PCR-Raster Python should be installed, see steps 1-3 in 'How to install' section at the [PCR-GLOBWB](https://github.com/UU-Hydro/PCR-GLOBWB_model) GitHub repository. For this pre-processing, the modified PCR-GLOBWB Python model files are located in [model_tools_src/python/pcr-globwb/](model_tools_src/python/pcr-globwb/).
 
-The GLOBGM pre-processing steps 'Prepare Model Partitioning' and 'Partition and Write Model Input' require the Fortran compilation (e.g. using [Intel](https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler.html#gs.hn3ht0) or [GNU](https://gcc.gnu.org/fortran/)) of the tools located in [model_tools_src/fortran/](model_tools_src/fortran/). Note that for some of these tools (i.e. *catchcreatemetis*, *mf6ggm*) the code should be linked with [METIS](http://glaros.dtc.umn.edu/gkhome/metis/metis/download). For this, METIS should be compiled at 64-bit precision (see [model_tools_scr/c/metis/metis.h](/model_tools_src/c/metis/metis.h)). 
+The GLOBGM pre-processing steps 'Prepare Model Partitioning' and 'Partition and Write Model Input' require the Fortran compilation (e.g. using [Intel](https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler.html#gs.hn3ht0) or [GNU](https://gcc.gnu.org/fortran/)) of the tools located in [model_tools_src/fortran/](model_tools_src/fortran/). Note that for some of these tools (i.e. *catchcreatemetis*, *mf6ggm*) the code should be linked with [METIS](http://glaros.dtc.umn.edu/gkhome/metis/metis/download). For this, METIS should be compiled at 64-bit precision (see [model_tools_scr/c/metis/metis.h](/model_tools_src/c/metis/metis.h)).
 
 For running the model ('Run Model') the parallel MODFLOW 6 code should be compiled with a Fortran compiler and linked with the Message Passing Interface library (see e.g. the template [model_tools_src/fortran/modflow6/makefile](model_tools_src/fortran/modflow6/makefile)).
 
@@ -35,18 +35,18 @@ The model input files for the tools can be found in [model_input](model_input/),
 - *{yoda_input}*: Yoda location https://geo.data.uu.nl/research-globgm/input/version_1.0/
 - *{yoda_output}*: Yoda location https://geo.data.uu.nl/research-globgm/output/version_1.0/
 - *{bin_dir}*: directory with all compiled Fortran programs
-- *{git_dir}*: root directory of this GitHub repository 
+- *{git_dir}*: root directory of this GitHub repository
 - *{map_dir}*: directory of tiled parameter data as a result of 'Write Tiled Parameter Data' pre-processing
-- *{globgm_dir}*: root model directory of the GLOBGM 
+- *{globgm_dir}*: root model directory of the GLOBGM
 - *{pft_lev}*: HydroBASINS Pfafstetter level for catchment partitioning. Valid are: '05', '06' or '08'.
 
 For post-processing, two main tools are provided:
 
-- *mf6ggmpost*: Fortran tool to read GLOBGM output for MODFLOW and write heads or watertable depths, aggegrated data such as head decline slope, and sampled time series 
+- *mf6ggmpost*: Fortran tool to read GLOBGM output for MODFLOW and write heads or watertable depths, aggegrated data such as head decline slope, and sampled time series
 - *analyze_gw_head:* R-script used for evaluating the transient GLOBGM results for the CONUS using NWIS observation wells (see Section 3.3 of Verkaik et al., 2022). See [model_evaluation](model_valuation/) for corresponding input and output. This script it a modified version of [de Graaf et al. (2017)](https://doi.org/10.1016/j.advwatres.2017.01.011).
 
 ## Example output
-Computed steady-state water table depths using the GLOBGM (Figure 14a from Verkaik et al., 2022; *{yoda_output}*/steady-state/globgm-wtd-ss.tif). 
+Computed steady-state water table depths using the GLOBGM (Figure 14a from Verkaik et al., 2022; *{yoda_output}*/steady-state/globgm-wtd-ss.tif).
 
 ![](example_output.png)
 
