@@ -43,7 +43,9 @@ module mf6_module
   integer(i4b), parameter :: i_ghb1_cond         = 25
   integer(i4b), parameter :: i_ghb2_bhead        = 26
   integer(i4b), parameter :: i_ghb2_cond         = 27
-  integer(i4b), parameter :: nkey                = i_ghb2_cond
+  integer(i4b), parameter :: i_ndrnsys           = 28
+  integer(i4b), parameter :: i_nrivsys           = 29
+  integer(i4b), parameter :: nkey                = i_nrivsys
   !  
   character(len=20), dimension(nkey) :: keys
             !12345678901234567890    12345678901234567890
@@ -61,7 +63,8 @@ module mf6_module
              'inner_rclose       ', 'relaxation_factor   ', &
              'prim_sto           ',                         &
              'ghb_bhead          ', 'ghb_cond            ', &
-             'ghb2_bhead         ', 'ghb2_cond           '/
+             'ghb2_bhead         ', 'ghb2_cond           ', &
+             'ndrnsys            ', 'nrivsys              '/
   
   ! parameters
   integer(i4b),          parameter :: mxslen = 1024
@@ -152,6 +155,8 @@ module mf6_module
     integer(I4B)      :: ilay_max = 0
     integer(I4B)      :: iper_min = 0
     integer(I4B)      :: iper_max = 0
+    integer(I4B)      :: isys_min = 0
+    integer(I4B)      :: isys_max = 0
   end type tRaw
   type tRawDat
     type(tRaw), dimension(maxnraw) :: raw
@@ -387,6 +392,7 @@ module mf6_module
           this%raw(n)%key = change_case(words(1), 'l')
           call getminmax(words(1), '_', 'L', this%raw(n)%ilay_min, this%raw(n)%ilay_max)
           call getminmax(words(1), '_', 'P', this%raw(n)%iper_min, this%raw(n)%iper_max)
+          call getminmax(words(1), '_', 'S', this%raw(n)%isys_min, this%raw(n)%isys_max)
           !
           ! set data
           allocate(this%raw(n)%dat)
@@ -538,7 +544,7 @@ module mf6_module
     return
   end subroutine mf6_raw_init_dist
   
-  function mf6_raw_get_index(this, key, ilay, iper) result(ind)
+  function mf6_raw_get_index(this, key, ilay, iper, isys) result(ind)
 ! ******************************************************************************
 ! ******************************************************************************
 !
@@ -550,11 +556,12 @@ module mf6_module
     character(len=*), intent(in) :: key
     integer(I4B), intent(in) :: ilay
     integer(I4B), intent(in) :: iper
+    integer(I4B), intent(in) :: isys
     integer(I4B) :: ind
     ! -- local
-    integer :: i, j, il_min, il_max, ip_min, ip_max
+    integer :: i, j, il_min, il_max, ip_min, ip_max, is_min, is_max
     character(len=mxslen) :: s, lckey
-    logical :: lilay, liper
+    logical :: lilay, liper, lisys
 ! ------------------------------------------------------------------------------
     !
     lckey = change_case(key, 'l')
@@ -562,14 +569,15 @@ module mf6_module
     ind = 0
     do i = 1, this%nraw
       s = this%raw(i)%key
-      j = max(index(s,'_p'),index(s,'_l'))
+      j = max(max(index(s,'_p'),index(s,'_l')),index(s,'_s'))
       if (j > 0) then
         s = s(1:j-1)
       end if
       if (index(s, trim(lckey)) > 0) then
         il_min = this%raw(i)%ilay_min; il_max = this%raw(i)%ilay_max
         ip_min = this%raw(i)%iper_min; ip_max = this%raw(i)%iper_max
-        lilay = .false.; liper = .false.
+        is_min = this%raw(i)%isys_min; is_max = this%raw(i)%isys_max
+        lilay = .false.; liper = .false.; lisys = .false.
         if ((il_min == 0).and.(il_max == 0)) then
           lilay = .true.
         else
@@ -584,7 +592,15 @@ module mf6_module
             liper = .true.
           end if
         end if
-        if (lilay.and.liper) then
+        if ((is_min == 0).and.(is_max == 0)) then
+          lisys = .true.
+        else
+          if ((is_min <= isys).and.(isys <= is_max)) then
+            lisys = .true.
+          end if
+        end if
+        !
+        if (lilay.and.liper.and.lisys) then
           if (ind == 0) then
             ind = i
           else
@@ -602,7 +618,7 @@ module mf6_module
     return
   end function mf6_raw_get_index
 
-  function mf6_raw_key_exists(this, key, ilay, iper) result(lex)
+  function mf6_raw_key_exists(this, key, ilay, iper, isys) result(lex)
 ! ******************************************************************************
 ! ******************************************************************************
 !
@@ -614,17 +630,20 @@ module mf6_module
     character(len=*), intent(in) :: key
     integer(I4B), optional, intent(in) :: ilay
     integer(I4B), optional, intent(in) :: iper
+    integer(I4B), optional, intent(in) :: isys
     logical :: lex
     ! -- local
     integer(I4B) :: i
-    integer(I4B) :: jlay, jper
+    integer(I4B) :: jlay, jper, jsys
 ! ------------------------------------------------------------------------------
     jlay = 0
     jper = 0
+    jsys = 0
     if (present(ilay)) jlay = ilay
     if (present(iper)) jper = iper
+    if (present(isys)) jsys = isys
     !
-    i = this%mf6_raw_get_index(key, jlay, jper)
+    i = this%mf6_raw_get_index(key, jlay, jper, jsys)
     if (i > 0) then
       lex = .true.
     else
@@ -634,7 +653,7 @@ module mf6_module
     return
   end function mf6_raw_key_exists
   
-  function mf6_raw_get_name_char(this, key, ilay, iper, cdef) result(cval)
+  function mf6_raw_get_name_char(this, key, ilay, iper, isys, cdef) result(cval)
 ! ******************************************************************************
 ! ******************************************************************************
 !
@@ -646,18 +665,21 @@ module mf6_module
     character(len=*), intent(in) :: key
     integer(I4B), optional, intent(in) :: ilay
     integer(I4B), optional, intent(in) :: iper
+    integer(I4B), optional, intent(in) :: isys
     character(len=*), optional, intent(in) :: cdef
     character(len=:), allocatable :: cval
     ! -- local
     integer(I4B) :: i
-    integer(I4B) :: jlay, jper
+    integer(I4B) :: jlay, jper, jsys
 ! ------------------------------------------------------------------------------
     jlay = 0
     jper = 0
+    jsys = 0
     if (present(ilay)) jlay = ilay
     if (present(iper)) jper = iper
+    if (present(isys)) jsys = isys
     !
-    if (.not.this%exists(key, jlay, jper)) then
+    if (.not.this%exists(key, jlay, jper, jsys)) then
       if (present(cdef)) then
         cval = trim(cdef)
         return
@@ -665,7 +687,7 @@ module mf6_module
         call errmsg('Error: key '//trim(key)// 'not found.')
       end if
     end if
-    i = this%mf6_raw_get_index(key, jlay, jper)
+    i = this%mf6_raw_get_index(key, jlay, jper, jsys)
     cval = trim(this%raw(i)%dat%s)
     !
     return
@@ -764,7 +786,7 @@ module mf6_module
   end function mf6_raw_get_name_r8b
 
   subroutine mf6_raw_read_block_i4b(this, ikey, ir0, ir1, ic0, ic1, arr, nodata, &
-   ilay, iper)
+   ilay, iper, isys)
 ! ******************************************************************************
     ! -- modules
     use imod_idf, only: idfobj
@@ -776,20 +798,23 @@ module mf6_module
     integer(I4B), intent(in), optional :: nodata
     integer(I4B), optional, intent(in) :: ilay
     integer(I4B), optional, intent(in) :: iper
+    integer(I4B), optional, intent(in) :: isys
     ! --- local
-    integer(I4B) :: jlay, jper, i
+    integer(I4B) :: jlay, jper, jsys, i
     type(idfobj), pointer :: idf
     type(tData), pointer :: dat
 ! ------------------------------------------------------------------------------
     jlay = 0
     jper = 0
+    jsys = 0
     if (present(ilay)) jlay = ilay
     if (present(iper)) jper = iper
+    if (present(isys)) jsys = isys
     !
-    if (.not.this%exists(keys(ikey), jlay, jper)) then
+    if (.not.this%exists(keys(ikey), jlay, jper, jsys)) then
       call errmsg('Error: key '//trim(keys(ikey))// 'not found.')
     end if
-    i = this%mf6_raw_get_index(keys(ikey), jlay, jper)
+    i = this%mf6_raw_get_index(keys(ikey), jlay, jper, jsys)
     dat => this%raw(i)%dat
     !
     select case(dat%file_type)
@@ -810,7 +835,7 @@ module mf6_module
   end subroutine mf6_raw_read_block_i4b
    
   subroutine mf6_raw_read_block_r4b(this, ikey, ir0, ir1, ic0, ic1, arr, nodata, &
-   ilay, iper, itile)
+   ilay, iper, isys, itile)
 ! ******************************************************************************
     ! -- modules
     use imod_idf, only: idfobj
@@ -822,22 +847,25 @@ module mf6_module
     real(R4B), intent(in), optional :: nodata
     integer(I4B), optional, intent(in) :: ilay
     integer(I4B), optional, intent(in) :: iper
+    integer(I4B), optional, intent(in) :: isys
     integer(I2B), dimension(:,:), pointer, optional :: itile
     ! --- local
-    integer(I4B) :: jlay, jper, i, ic, ir, jc, jr, nc, nr
+    integer(I4B) :: jlay, jper, jsys, i, ic, ir, jc, jr, nc, nr
     real(R4B) :: r4v
     type(idfobj), pointer :: idf
     type(tData), pointer :: dat => null()
 ! ------------------------------------------------------------------------------
     jlay = 0
     jper = 0
+    jsys = 0
     if (present(ilay)) jlay = ilay
     if (present(iper)) jper = iper
+    if (present(isys)) jsys = isys
     !
     if (.not.this%exists(keys(ikey), jlay, jper)) then
       call errmsg('Error: key '//trim(keys(ikey))// 'not found.')
     end if
-    i = this%mf6_raw_get_index(keys(ikey), jlay, jper)
+    i = this%mf6_raw_get_index(keys(ikey), jlay, jper, jsys)
     dat => this%raw(i)%dat
     !
     select case(dat%file_type)
@@ -878,7 +906,7 @@ module mf6_module
     return
  end subroutine mf6_raw_read_block_r4b
 
- function mf6_raw_get_index_idf(this, ikey, ilay, iper) result(idf)
+ function mf6_raw_get_index_idf(this, ikey, ilay, iper, isys) result(idf)
 ! ******************************************************************************
 ! ******************************************************************************
 !
@@ -890,20 +918,23 @@ module mf6_module
     integer(I4B), intent(in) :: ikey
     integer(I4B), optional, intent(in) :: ilay
     integer(I4B), optional, intent(in) :: iper
+    integer(I4B), optional, intent(in) :: isys
     type(idfobj), pointer :: idf
     ! -- local
-    integer(I4B) :: jlay, jper, i
+    integer(I4B) :: jlay, jper, jsys, i
     type(tData), pointer :: dat
 ! ------------------------------------------------------------------------------
     jlay = 0
     jper = 0
+    jsys = 0
     if (present(ilay)) jlay = ilay
     if (present(iper)) jper = iper
+    if (present(isys)) jsys = isys
     !
-    if (.not.this%exists(keys(ikey), jlay, jper)) then
+    if (.not.this%exists(keys(ikey), jlay, jper, jsys)) then
       call errmsg('Error: key '//trim(keys(ikey))// 'not found.')
     end if
-    i = this%mf6_raw_get_index(keys(ikey), jlay, jper)
+    i = this%mf6_raw_get_index(keys(ikey), jlay, jper, jsys)
     dat => this%raw(i)%dat
     
     if (dat%file_type == i_idf) then
@@ -1539,7 +1570,7 @@ module mf6_module
 ! ==============================================================================
 ! ==============================================================================
   
-  function mf6_mod_get_i_raw(this, i_dat, ilay_dat, iper_dat) &
+  function mf6_mod_get_i_raw(this, i_dat, ilay_dat, iper_dat, isys_dat) &
     result(i_raw)
 ! ******************************************************************************
 ! ******************************************************************************
@@ -1551,10 +1582,11 @@ module mf6_module
     integer(i4b), intent(in) :: i_dat
     integer(i4b), intent(in) :: ilay_dat
     integer(i4b), intent(in) :: iper_dat
+    integer(i4b), intent(in) :: isys_dat
     integer(i4b) :: i_raw
     ! -- local
 ! ------------------------------------------------------------------------------
-    i_raw = raw%mf6_raw_get_index(keys(i_dat), ilay_dat, iper_dat)
+    i_raw = raw%mf6_raw_get_index(keys(i_dat), ilay_dat, iper_dat, isys_dat)
     if (i_raw <= 0) then
       call errmsg('mf6_mod_get_array_r8: program error 1')
     end if
@@ -1650,7 +1682,7 @@ module mf6_module
     return
   end function mf6_mod_get_val_r8
   
-  subroutine mf6_mod_get_array_r8(this, i_dat, ilay_dat, iper_dat, ilay_tgt, &
+  subroutine mf6_mod_get_array_r8(this, i_dat, ilay_dat, iper_dat, ilay_tgt, isys_dat,&
     arrflg, arr, ib_in, toponly_in)
 ! ******************************************************************************
 ! ******************************************************************************
@@ -1668,6 +1700,7 @@ module mf6_module
     real(r8b), dimension(:), pointer, intent(inout) :: arr
     integer(i4b), intent(in), optional :: ib_in
     logical, intent(in), optional :: toponly_in
+    integer(i4b), intent(in), optional :: isys_dat
     ! -- local
     real(r4b), parameter :: r4nodata = -12345.
     real(r8b), parameter :: r8nodata = -12345.d0
@@ -1675,7 +1708,7 @@ module mf6_module
     type(tData), pointer :: dat => null()
     type(idfobj), pointer :: idf
     integer(i4b) :: n, nt, i, ireg, ir, ic, jr, jc, ib, itile, ilay, nlay
-    integer(i4b) :: arrsiz
+    integer(i4b) :: arrsiz, nodes
     real(r4b) :: r4val
     real(r8b) :: r8val
     logical :: lfirst, ltile, toponly, found, ldefault
@@ -1696,21 +1729,26 @@ module mf6_module
       toponly = .false.
     end if
     !
-    i = raw%mf6_raw_get_index(keys(i_dat), ilay_dat, iper_dat)
+    if (present(isys_dat)) then
+      i = raw%mf6_raw_get_index(keys(i_dat), ilay_dat, iper_dat, isys_dat)
+    else
+      i = raw%mf6_raw_get_index(keys(i_dat), ilay_dat, iper_dat, isys_dat)
+    end if
+    !
     if (i <= 0) then
       call errmsg('mf6_mod_get_array_r8: program error 1')
     end if
     dat => raw%raw(i)%dat
     !
-    n = sum(this%layer_nodes)
+    nodes = sum(this%layer_nodes)
     if (.not.associated(arr)) then
-      allocate(arr(n))
+      allocate(arr(nodes))
       do i = 1, size(arr)
         arr(i) = DZERO
       end do
     end if
     if (.not.associated(arrflg)) then
-      allocate(arrflg(n))
+      allocate(arrflg(nodes))
       do i = 1, size(arrflg)
         arrflg(i) = 0
       end do
@@ -1719,7 +1757,6 @@ module mf6_module
     if (size(arrflg) /= size(arr)) then
       call errmsg('mf6_mod_get_array_r8: program error 1')
     end if
-    arrsiz = size(arrflg)
     
     select case(dat%file_type)
       case(i_idf)
@@ -1850,9 +1887,12 @@ module mf6_module
                 r8val = real(r4val,r8b)
             end select
             if (n /= 0) then
-              if ((n < 1) .or. (n > arrsiz)) then
+              if ((n < 1) .or. (n > nodes)) then
                 call errmsg('mf6_mod_get_array_r8: program error 3 '//ta((/ib/))//' '//&
-                  ta((/n/))//' '//ta((/arrsiz/)))
+                  ta((/n/))//' '//ta((/nodes/)))
+              end if
+              if (isys_dat > 0) then
+                n = n + (isys_dat-1)*nodes
               end if
               arr(n) = r8val * dat%r8mult + dat%r8add
               arrflg(n) = 1
@@ -2013,7 +2053,7 @@ module mf6_module
     return
   end subroutine mf6_mod_clean_regions
     
-  function mf6_mod_count_i1a(this, i1a) result(cnt)
+  function mf6_mod_count_i1a(this, i1a, nsys_in) result(cnt)
 ! ******************************************************************************
 ! ******************************************************************************
 !
@@ -2023,29 +2063,39 @@ module mf6_module
     ! -- dummy
     class(tMf6_mod) :: this
     integer(i1b), dimension(:), intent(in) :: i1a
+    integer(i4b), intent(in), optional :: nsys_in
     integer(i4b), dimension(gnlay) :: cnt
     ! -- local
     type(tReg), pointer :: reg
     type(tBb), pointer :: bb => null()
-    integer(i4b) :: ireg, il, ir, ic, n
+    integer(i4b) :: ireg, il, ir, ic, n, m, nsys, isys, nodes
 ! ------------------------------------------------------------------------------
+    nodes = sum(this%layer_nodes)
+    if (present(nsys_in)) then
+      nsys = nsys_in
+    else
+      nsys = 1
+    end if
     !
     cnt = 0
     !
     if (.not.associated(this%nreg)) return
     !
-    do ireg = 1, this%nreg
-      reg => this%reg(ireg)
-      bb => reg%bb
-      do il = 1, gnlay
-        do ir = 1, bb%nrow
-          do ic = 1, bb%ncol
-            n = abs(reg%nodmap(ic,ir,il))
-            if (n > 0) then
-              if (i1a(n) == 1) then
-                cnt(il) = cnt(il) + 1
+    do isys = 1, nsys
+      do ireg = 1, this%nreg
+        reg => this%reg(ireg)
+        bb => reg%bb
+        do il = 1, gnlay
+          do ir = 1, bb%nrow
+            do ic = 1, bb%ncol
+              n = abs(reg%nodmap(ic,ir,il))
+              if (n > 0) then
+                m = n + (isys-1)*nodes
+                if (i1a(m) == 1) then
+                  cnt(il) = cnt(il) + 1
+                end if
               end if
-            end if
+            end do
           end do
         end do
       end do
@@ -2133,11 +2183,11 @@ module mf6_module
         do ireg = 1, this%nreg
           reg => this%reg(ireg); bb => reg%bb
           if (ilay == 1) then
-            top_i_raw = this%get_i_raw(i_top, 0, 0)
-            bot_i_raw = this%get_i_raw(i_bot, 1, 0)
+            top_i_raw = this%get_i_raw(i_top, 0, 0, 0)
+            bot_i_raw = this%get_i_raw(i_bot, 1, 0, 0)
           else if (ilay == 2) then
-            top_i_raw = this%get_i_raw(i_bot, 1, 0)
-            bot_i_raw = this%get_i_raw(i_bot, 2, 0)
+            top_i_raw = this%get_i_raw(i_bot, 1, 0, 0)
+            bot_i_raw = this%get_i_raw(i_bot, 2, 0, 0)
           end if
           !
           do ir = 1, reg%bb%nrow
@@ -2478,7 +2528,8 @@ module mf6_module
     return
   end subroutine mf6_mod_write_list_1
   
-  subroutine mf6_mod_write_list_2(this, iu, nx, f, arrflg, arr, arr2, lbin, lbinpos, s)
+  subroutine mf6_mod_write_list_2(this, iu, nx, f, arrflg, arr, arr2, lbin, &
+    lbinpos, s, nsys, nodes)
 ! ******************************************************************************
 ! ******************************************************************************
 !
@@ -2496,19 +2547,74 @@ module mf6_module
     logical, intent(in) :: lbin
     logical, intent(in) :: lbinpos
     character(len=*), intent(out), optional :: s
+    integer(i4b), intent(in), optional :: nsys
+    integer(i4b), intent(in), optional :: nodes
     ! -- local
     integer(i4b), dimension(:), allocatable :: i4w
     real(r8b), dimension(:), allocatable :: r8w1, r8w2
-    integer(i4b) :: ju, i, n
+    integer(i4b) :: ju, i, j, n, isys
     integer(i8b) :: p0, p1
     character(len=mxslen) :: fmt
-    logical :: liu
+    logical :: liu, lsys
 ! ------------------------------------------------------------------------------
+    !
+    if (present(nsys)) then
+      if (.not.present(nodes)) then
+        call errmsg('mf6_mod_write_list_2: nodes should be an argument.')
+       end if
+       lsys = .true.
+    else
+      lsys = .false.
+    end if
     !
     if (present(s)) then
       liu = .false.
     else
       liu = .true.
+    end if
+    !
+    n = 0
+    if (lsys) then
+      do isys = 1, nsys
+        do j = 1, nodes
+          i = j + (isys-1)*nodes
+          if (arrflg(i) == 1) then
+            n = n + 1
+          end if
+        end do
+      end do
+    else
+      do i = 1, size(arrflg)
+        if (arrflg(i) == 1) then
+          n = n + 1
+        end if
+      end do
+    end if
+    !
+    if (n > 0) then
+      allocate(i4w(n),r8w1(n),r8w2(n))
+      n = 0
+      if (lsys) then
+        do isys = 1, nsys
+          do j = 1, nodes
+            i = j + (isys-1)*nodes
+            if (arrflg(i) == 1) then
+              n = n + 1
+              i4w(n) = j; r8w1(n) = arr(i); r8w2(n) = arr2(i)
+            end if
+          end do
+        end do
+      else
+        do i = 1, size(arrflg)
+          if (arrflg(i) == 1) then
+            n = n + 1
+            i4w(n) = i; r8w1(n) = arr(i); r8w2(n) = arr2(i)
+          end if
+        end do
+      end if
+    else
+      call logmsg('mf6_mod_write_list_2: Nothing to do!')
+      return
     end if
     !
     write(fmt,'(a,i,a)') '(',nx,'x,a)'
@@ -2520,26 +2626,9 @@ module mf6_module
         f = this%fbin
         ju = this%iubin
       end if
-      n = 0
-      do i = 1, size(arrflg)
-        if (arrflg(i) == 1) then
-          n = n + 1
-        end if
-      end do
       if (lbinpos) then
         inquire(ju,pos=p0)
-      end if
-      if (n > 0) then
-        allocate(i4w(n),r8w1(n),r8w2(n))
-        n = 0
-        do i = 1, size(arrflg)
-          if (arrflg(i) == 1) then
-            n = n + 1
-            i4w(n) = i; r8w1(n) = arr(i); r8w2(n) = arr2(i)
-          end if
-        end do
         write(ju)((i4w(i),r8w1(i),r8w2(i)),i=1,n)
-        deallocate(i4w,r8w1,r8w2)
       end if
       if (lbinpos) then
         inquire(ju,pos=p1)
@@ -2563,10 +2652,8 @@ module mf6_module
     else
       f = trim(f)//'.asc'
       call open_file(f, ju, 'w')
-      do i = 1, size(arrflg)
-        if (arrflg(i) == 1) then
-          write(ju,'(a)') ta((/i/))//' '//ta((/arr(i)/))//' '//ta((/arr2(i)/))
-        end if
+      do i = 1, n
+        write(ju,'(a)') ta((/i/))//' '//ta((/r8w1(i)/))//' '//ta((/r8w2(i)/))
       end do
       close(ju)
       !call get_rel_up(f, 2)
@@ -2577,11 +2664,13 @@ module mf6_module
       end if
     end if
     !
+    deallocate(i4w,r8w1,r8w2)
+    !
     return
   end subroutine mf6_mod_write_list_2
   
   subroutine mf6_mod_write_list_3(this, iu, nx, f, arrflg, arr, arr2, arr3, &
-    lbin, lbinpos, s)
+    lbin, lbinpos, s, nsys, nodes)
 ! ******************************************************************************
 ! ******************************************************************************
 !
@@ -2600,18 +2689,73 @@ module mf6_module
     logical, intent(in) :: lbin
     logical, intent(in) :: lbinpos
     character(len=*), intent(out), optional :: s
+    integer(i4b), intent(in), optional :: nsys
+    integer(i4b), intent(in), optional :: nodes
     ! -- local
     integer(i4b), dimension(:), allocatable :: i4w
     real(r8b), dimension(:), allocatable :: r8w1, r8w2, r8w3
-    integer(i4b) :: ju, i, n
+    integer(i4b) :: ju, i, j, n, isys
     integer(i8b) :: p0, p1
     character(len=mxslen) :: fmt
-    logical :: liu
+    logical :: liu, lsys
 ! ------------------------------------------------------------------------------
+    if (present(nsys)) then
+      if (.not.present(nodes)) then
+        call errmsg('mf6_mod_write_list_2: nodes should be an argument.')
+       end if
+       lsys = .true.
+    else
+      lsys = .false.
+    end if
+    !
     if (present(s)) then
       liu = .false.
     else
       liu = .true.
+    end if
+    !
+    n = 0
+    if (lsys) then
+      do isys = 1, nsys
+        do j = 1, nodes
+          i = j + (isys-1)*nodes
+          if (arrflg(i) == 1) then
+            n = n + 1
+          end if
+        end do
+      end do
+    else
+      do i = 1, size(arrflg)
+        if (arrflg(i) == 1) then
+          n = n + 1
+        end if
+      end do
+    end if
+    !
+    if (n > 0) then
+      allocate(i4w(n),r8w1(n),r8w2(n),r8w3(n))
+      n = 0
+      if (lsys) then
+        do isys = 1, nsys
+          do j = 1, nodes
+            i = j + (isys-1)*nodes
+            if (arrflg(i) == 1) then
+              n = n + 1
+              i4w(n) = j; r8w1(n) = arr(i); r8w2(n) = arr2(i); r8w3(n) = arr3(i)
+            end if
+          end do
+        end do
+      else
+        do i = 1, size(arrflg)
+          if (arrflg(i) == 1) then
+            n = n + 1
+            i4w(n) = i; r8w1(n) = arr(i); r8w2(n) = arr2(i); r8w3(n) = arr3(i)
+          end if
+        end do
+      end if
+    else
+      call logmsg('mf6_mod_write_list_3: Nothing to do!')
+      return
     end if
     !
     write(fmt,'(a,i,a)') '(',nx,'x,a)'
@@ -2623,26 +2767,11 @@ module mf6_module
         f = this%fbin
         ju = this%iubin
       end if
-      n = 0
-      do i = 1, size(arrflg)
-        if (arrflg(i) == 1) then
-          n = n + 1
-        end if
-      end do
       if (lbinpos) then
         inquire(ju,pos=p0)
       end if
       if (n > 0) then
-        allocate(i4w(n),r8w1(n),r8w2(n),r8w3(n))
-        n = 0
-        do i = 1, size(arrflg)
-          if (arrflg(i) == 1) then
-            n = n + 1
-            i4w(n) = i; r8w1(n) = arr(i); r8w2(n) = arr2(i); r8w3(n) = arr3(i)
-          end if
-        end do
         write(ju)((i4w(i),r8w1(i),r8w2(i),r8w3(i)),i=1,n)
-        deallocate(i4w,r8w1,r8w2,r8w3)
       end if
       if (lbinpos) then
         inquire(ju,pos=p1)
@@ -2666,11 +2795,9 @@ module mf6_module
     else
       f = trim(f)//'.asc'
       call open_file(f, ju, 'w')
-      do i = 1, size(arrflg)
-        if (arrflg(i) == 1) then
-          write(ju,'(a)') ta((/i/))//' '// &
-            ta((/arr(i)/))//' '//ta((/arr2(i)/))//' '//ta((/arr3(i)/))
-        end if
+      do i = 1, n
+        write(ju,'(a)') ta((/i4w(i)/))//' '// &
+          ta((/r8w1(i)/))//' '//ta((/r8w2(i)/))//' '//ta((/r8w3(i)/))
       end do
       close(ju)
       !call get_rel_up(f, 2)
@@ -2680,6 +2807,8 @@ module mf6_module
         write(s,fmt) 'OPEN/CLOSE '//trim(f)
       end if
     end if
+    !
+    deallocate(i4w,r8w1,r8w2,r8w3)
     !
     return
   end subroutine mf6_mod_write_list_3
@@ -2726,6 +2855,9 @@ module mf6_module
     pckact(ighb2) = raw%geti('act_ghb2',idef=0)
     pckact(ichd1) = raw%geti('act_chd',idef=1)
     pckact(ichd2) = raw%geti('act_chd2',idef=1)
+    !
+    !call this%write_drn(lbin, lbinpos) !DEBUG
+    !call this%write_riv(lbin, lbinpos); stop !DEBUG
     !
     call this%write_disu(lbin, lbinpos)
     call this%write_ic(lbin, lbinpos)
@@ -2851,10 +2983,10 @@ module mf6_module
     write(iu,'(   a)') 'END DIMENSIONS'
     write(iu,'(a)')
     write(iu,'(   a)') 'BEGIN GRIDDATA'
-    call this%get_array(i_top, 0, 0, 1, i1wrk, r8wrk)
-    if (gnlay == 2) call this%get_array(i_bot, 1, 0, 2, i1wrk, r8wrk) !i_bot_l1
-    call this%get_array(i_bot, 1, 0, 1, i1wrk2, r8wrk2) !i_bot_l1
-    if (gnlay == 2) call this%get_array(i_bot, 2, 0, 2, i1wrk2, r8wrk2) !i_bot_l2
+    call this%get_array(i_top, 0, 0, 1, 0, i1wrk, r8wrk)
+    if (gnlay == 2) call this%get_array(i_bot, 1, 0, 2, 0, i1wrk, r8wrk) !i_bot_l1
+    call this%get_array(i_bot, 1, 0, 1, 0, i1wrk2, r8wrk2) !i_bot_l1
+    if (gnlay == 2) call this%get_array(i_bot, 2, 0, 2, 0, i1wrk2, r8wrk2) !i_bot_l2
     !
     ! do a check
     allocate(i4wrk1d(disu%nodes+1)); i4wrk1d(1) = 1
@@ -2971,8 +3103,8 @@ module mf6_module
       write(iu,'(a)')
       write(iu,'(   a)') 'BEGIN GRIDDATA'
       write(iu,'(2x,a)') 'STRT'
-      call this%get_array(i_strt, 1, 0, 1, i1wrk, r8wrk) !i_strt_l1
-      if (gnlay == 2) call this%get_array(i_strt, 2, 0, 2, i1wrk, r8wrk) !i_strt_l2
+      call this%get_array(i_strt, 1, 0, 1, 0, i1wrk, r8wrk) !i_strt_l1
+      if (gnlay == 2) call this%get_array(i_strt, 2, 0, 2, 0, i1wrk, r8wrk) !i_strt_l2
       f = trim(pb)//'.ic'; call this%write_array(iu, 4, f, r8wrk, lbin, lbinpos)
       write(iu,'(   a)') 'END GRIDDATA'
       close(iu)
@@ -3133,14 +3265,14 @@ module mf6_module
     icelltype = raw%geti('icelltype',idef=0)
     write(iu,'(4x,a)') 'CONSTANT '//ta((/icelltype/))
     write(iu,'(2x,a)') 'K'
-    call this%get_array(i_k, 1, 0, 1, i1wrk, r8wrk) !i_k_l1
-    if (gnlay == 2) call this%get_array(i_k, 2, 0, 2, i1wrk, r8wrk) !i_k_l2
+    call this%get_array(i_k, 1, 0, 1, 0, i1wrk, r8wrk) !i_k_l1
+    if (gnlay == 2) call this%get_array(i_k, 2, 0, 2, 0, i1wrk, r8wrk) !i_k_l2
     f = trim(pb)//'.npf.k'; call this%write_array(iu, 4, f, r8wrk, lbin, lbinpos)
     call clear_wrk()
     write(iu,'(2x,a)') 'K33'
     if (gnlay == 2) then
-      call this%get_array(i_k33, 1, 0, 1, i1wrk, r8wrk) !i_k33_l1
-      call this%get_array(i_k33, 2, 0, 2, i1wrk, r8wrk) !i_k33_l2
+      call this%get_array(i_k33, 1, 0, 1, 0, i1wrk, r8wrk) !i_k33_l1
+      call this%get_array(i_k33, 2, 0, 2, 0, i1wrk, r8wrk) !i_k33_l2
       f = trim(pb)//'.npf.k33'; call this%write_array(iu, 4, f, r8wrk, lbin, lbinpos)
     else
       write(iu,'(4x,a)') 'CONSTANT 0.1'
@@ -3189,8 +3321,8 @@ module mf6_module
     write(iu,'(2x,a)') 'ICONVERT'
     write(iu,'(4x,a)') 'CONSTANT 0'
     write(iu,'(2x,a)') 'SS'
-    call this%get_array(i_prim_sto, 1, 0, 1, i1wrk, r8wrk)
-    call this%get_array(i_prim_sto, 2, 0, 2, i1wrk, r8wrk)
+    call this%get_array(i_prim_sto, 1, 0, 1, 0, i1wrk, r8wrk)
+    call this%get_array(i_prim_sto, 2, 0, 2, 0, i1wrk, r8wrk)
     f = trim(pb)//'.sto.ps'; call this%write_array(iu, 4, f, r8wrk, lbin, lbinpos)
     call clear_wrk()
     write(iu,'(2x,a)') 'SY'
@@ -3246,8 +3378,8 @@ module mf6_module
       pb = p
     end if
     !
-    call this%get_array(i_strt, 1, 0, 1, i1wrk, r8wrk, ib_in=pack_ib_in) !i_strt_l1
-    if (gnlay == 2) call this%get_array(i_strt, 2, 0, 2, i1wrk, r8wrk, ib_in=pack_ib_in) !i_strt_l2
+    call this%get_array(i_strt, 1, 0, 1, 0, i1wrk, r8wrk, ib_in=pack_ib_in) !i_strt_l1
+    if (gnlay == 2) call this%get_array(i_strt, 2, 0, 2, 0, i1wrk, r8wrk, ib_in=pack_ib_in) !i_strt_l2
     nbound_lay = this%count_i1a(i1wrk); maxbound = sum(nbound_lay)
     !
     if (maxbound > 0) then
@@ -3296,9 +3428,11 @@ module mf6_module
     logical, intent(in) :: lbin
     logical, intent(in) :: lbinpos
     ! -- local
+    type(tData), pointer :: dat => null()
     character(len=mxslen), dimension(:), allocatable :: cwk
-    character(len=mxslen) :: p, pb, f
-    integer(i4b) :: i, n, iu, nbound, maxbound, iper, jper, nper, nperspu
+    character(len=mxslen) :: p, pb, f, s
+    integer(i4b) :: i, n, iu, nbound, maxbound, iper, jper, nper, nperspu, nodes
+    integer(i4b) :: nsys, isys
     integer(i4b), dimension(gnlay) :: nbound_lay
     logical, dimension(:), allocatable :: lact
 ! ------------------------------------------------------------------------------
@@ -3313,15 +3447,37 @@ module mf6_module
       pb = p
     end if
     !
+    ! check the presence of multiple drainage systems
+    s = raw%getc(keys(i_ndrnsys),cdef='')
+    if (len_trim(s) > 0) then
+      read(s,*) nsys
+    else
+      nsys = 1
+    end if
+    !
     ! write all binary files and store the file strings
     nper = raw%nper
     allocate(cwk(nper), lact(nper))
     maxbound = 0
     do iper = 1, nper
-      call this%get_array(i_drn_elev, 1, iper, 1, i1wrk, r8wrk, ib_in=2) !i_drn_elev_l1
-      if (gnlay == 2) call this%get_array(i_drn_elev, 2, iper, 2, i1wrk, r8wrk, ib_in=2) !i_drn_elev_l1
-      call this%get_array(i_drn_cond, 1, iper, 1, i1wrk, r8wrk2, ib_in=2)
-      if (gnlay == 2) call this%get_array(i_drn_cond, 2, iper, 2, i1wrk, r8wrk2, ib_in=2)
+      if (nsys > 1) then
+        call clear_wrk()
+        nodes = sum(this%layer_nodes)
+        allocate(i1wrk(nodes*nsys), r8wrk(nodes*nsys), r8wrk2(nodes*nsys))
+        i1wrk = 0; r8wrk = DZERO; r8wrk2 = DZERO
+        do isys = 1, nsys
+          call logmsg('---> Processing drain system '//ta([isys])//'/'//ta([nsys])//'...')
+          call this%get_array(i_drn_elev, 1, iper, 1, isys, i1wrk, r8wrk, ib_in=2) !i_drn_elev_l1
+          if (gnlay == 2) call this%get_array(i_drn_elev, 2, iper, 2, isys, i1wrk, r8wrk, ib_in=2) !i_drn_elev_l2
+          call this%get_array(i_drn_cond, 1, iper, 1, isys, i1wrk, r8wrk2, ib_in=2)
+          if (gnlay == 2) call this%get_array(i_drn_cond, 2, iper, 2, isys, i1wrk, r8wrk2, ib_in=2)
+        end do
+      else
+        call this%get_array(i_drn_elev, 1, iper, 1, 0, i1wrk, r8wrk, ib_in=2) !i_drn_elev_l1
+        if (gnlay == 2) call this%get_array(i_drn_elev, 2, iper, 2, 0, i1wrk, r8wrk, ib_in=2) !i_drn_elev_l2
+        call this%get_array(i_drn_cond, 1, iper, 1, 0, i1wrk, r8wrk2, ib_in=2)
+        if (gnlay == 2) call this%get_array(i_drn_cond, 2, iper, 2, 0, i1wrk, r8wrk2, ib_in=2)
+      end if
       !
       ! check
       do i = 1, size(i1wrk)
@@ -3345,7 +3501,7 @@ module mf6_module
         call logmsg('Removed '//ta((/n/))//' drains with zero conductance.')
       end if
       !
-      nbound_lay = this%count_i1a(i1wrk); nbound = sum(nbound_lay)
+      nbound_lay = this%count_i1a(i1wrk, nsys); nbound = sum(nbound_lay)
       maxbound = max(nbound,maxbound)
       if (nbound == 0) then
         lact(iper) = .false.
@@ -3353,7 +3509,12 @@ module mf6_module
       else
         lact(iper) = .true.
         f = trim(pb)//'.drn.sp'//ta((/iper/),'(i3.3)')
-        call this%write_list(iu, 4, f, i1wrk, r8wrk, r8wrk2, lbin, lbinpos, cwk(iper))
+        if (nsys > 1) then
+          call this%write_list(iu, 4, f, i1wrk, r8wrk, r8wrk2, lbin, lbinpos, s=cwk(iper), &
+            nsys=nsys, nodes=nodes)
+        else
+          call this%write_list(iu, 4, f, i1wrk, r8wrk, r8wrk2, lbin, lbinpos, s=cwk(iper))
+        end if
       end if
       call clear_wrk()
     end do
@@ -3452,10 +3613,10 @@ module mf6_module
     allocate(cwk(nper), lact(nper))
     maxbound = 0
     do iper = 1, nper
-      call this%get_array(j_ghb_bhead, 1, iper, 1, i1wrk, r8wrk, ib_in=2) !j_ghb_bhead_l1
-      if (gnlay == 2) call this%get_array(j_ghb_bhead, 2, iper, 2, i1wrk, r8wrk, ib_in=2) !j_ghb_bhead_l1
-      call this%get_array(j_ghb_cond, 1, iper, 1, i1wrk, r8wrk2, ib_in=2)
-      if (gnlay == 2) call this%get_array(j_ghb_cond, 2, iper, 2, i1wrk, r8wrk2, ib_in=2)
+      call this%get_array(j_ghb_bhead, 1, iper, 1, 0, i1wrk, r8wrk, ib_in=2) !j_ghb_bhead_l1
+      if (gnlay == 2) call this%get_array(j_ghb_bhead, 2, iper, 2, 0, i1wrk, r8wrk, ib_in=2) !j_ghb_bhead_l1
+      call this%get_array(j_ghb_cond, 1, iper, 1, 0, i1wrk, r8wrk2, ib_in=2)
+      if (gnlay == 2) call this%get_array(j_ghb_cond, 2, iper, 2, 0, i1wrk, r8wrk2, ib_in=2)
       !
       ! filter for zero conductance
       n = 0
@@ -3547,8 +3708,9 @@ module mf6_module
     logical, intent(in) :: lbinpos
     ! -- local
     character(len=mxslen), dimension(:), allocatable :: cwk
-    character(len=mxslen) :: p, pb, f
+    character(len=mxslen) :: p, pb, f, s
     integer(i4b) :: iu, nbound, maxbound, i, n, iper, jper, nper, nperspu
+    integer(i4b) :: nodes, nsys, isys
     integer(i4b), dimension(gnlay) :: nbound_lay
     real(r8b) :: stage, rbot, cond
     logical, dimension(:), allocatable :: lact
@@ -3564,18 +3726,42 @@ module mf6_module
       pb = p
     end if
     !
+    ! check the presence of multiple drainage systems
+    s = raw%getc(keys(i_nrivsys),cdef='')
+    if (len_trim(s) > 0) then
+      read(s,*) nsys
+    else
+      nsys = 1
+    end if
+    !
     ! write all binary files and store the file strings
     nper = raw%nper
     allocate(cwk(nper), lact(nper))
     maxbound = 0
     !
     do iper = 1, nper
-      call this%get_array(i_riv_stage, 1, iper, 1, i1wrk, r8wrk,  ib_in=2, toponly_in=.true.) !i_riv_stage_l1
-      call this%get_array(i_riv_stage, 1, iper, 2, i1wrk, r8wrk,  ib_in=2, toponly_in=.true.) !i_riv_stage_l1
-      call this%get_array(i_riv_cond,  1, iper, 1, i1wrk, r8wrk2, ib_in=2, toponly_in=.true.) !i_riv_cond_l1
-      call this%get_array(i_riv_cond,  1, iper, 2, i1wrk, r8wrk2, ib_in=2, toponly_in=.true.) !i_riv_cond_l1
-      call this%get_array(i_riv_rbot,  1, iper, 1, i1wrk, r8wrk3, ib_in=2, toponly_in=.true.) !i_riv_rbot_l1
-      call this%get_array(i_riv_rbot,  1, iper, 2, i1wrk, r8wrk3, ib_in=2, toponly_in=.true.) !i_riv_rbot_l1
+      if (nsys > 1) then
+        call clear_wrk()
+        nodes = sum(this%layer_nodes)
+        allocate(i1wrk(nodes*nsys), r8wrk(nodes*nsys), r8wrk2(nodes*nsys), r8wrk3(nodes*nsys))
+        i1wrk = 0; r8wrk = DZERO; r8wrk2 = DZERO; r8wrk3 = DZERO
+        do isys = 1, nsys
+          call logmsg('---> Processing river system '//ta([isys])//'/'//ta([nsys])//'...')
+          call this%get_array(i_riv_stage, 1, iper, 1, isys, i1wrk, r8wrk,  ib_in=2, toponly_in=.true.) !i_riv_stage_l1
+          call this%get_array(i_riv_stage, 1, iper, 2, isys, i1wrk, r8wrk,  ib_in=2, toponly_in=.true.) !i_riv_stage_l2
+          call this%get_array(i_riv_cond,  1, iper, 1, isys, i1wrk, r8wrk2, ib_in=2, toponly_in=.true.) !i_riv_cond_l1
+          call this%get_array(i_riv_cond,  1, iper, 2, isys, i1wrk, r8wrk2, ib_in=2, toponly_in=.true.) !i_riv_cond_l2
+          call this%get_array(i_riv_rbot,  1, iper, 1, isys, i1wrk, r8wrk3, ib_in=2, toponly_in=.true.) !i_riv_rbot_l1
+          call this%get_array(i_riv_rbot,  1, iper, 2, isys, i1wrk, r8wrk3, ib_in=2, toponly_in=.true.) !i_riv_rbot_l2
+        end do
+      else
+        call this%get_array(i_riv_stage, 1, iper, 1, 0, i1wrk, r8wrk,  ib_in=2, toponly_in=.true.) !i_riv_stage_l1
+        call this%get_array(i_riv_stage, 1, iper, 2, 0, i1wrk, r8wrk,  ib_in=2, toponly_in=.true.) !i_riv_stage_l2
+        call this%get_array(i_riv_cond,  1, iper, 1, 0, i1wrk, r8wrk2, ib_in=2, toponly_in=.true.) !i_riv_cond_l1
+        call this%get_array(i_riv_cond,  1, iper, 2, 0, i1wrk, r8wrk2, ib_in=2, toponly_in=.true.) !i_riv_cond_l2
+        call this%get_array(i_riv_rbot,  1, iper, 1, 0, i1wrk, r8wrk3, ib_in=2, toponly_in=.true.) !i_riv_rbot_l1
+        call this%get_array(i_riv_rbot,  1, iper, 2, 0, i1wrk, r8wrk3, ib_in=2, toponly_in=.true.) !i_riv_rbot_l2
+      end if
       !
       ! checks and filter for zero conductance
       n = 0
@@ -3598,7 +3784,7 @@ module mf6_module
         call logmsg('Removed '//ta((/n/))//' rivers with zero conductance.')
       end if
       !
-      nbound_lay = this%count_i1a(i1wrk); nbound = sum(nbound_lay)
+      nbound_lay = this%count_i1a(i1wrk, nsys); nbound = sum(nbound_lay)
       maxbound = max(nbound,maxbound)
       if (nbound == 0) then
         lact(iper) = .false.
@@ -3606,7 +3792,12 @@ module mf6_module
       else
         lact(iper) = .true.
         f = trim(pb)//'.riv.sp'//ta((/iper/),'(i3.3)')
-        call this%write_list(iu, 2, f, i1wrk, r8wrk, r8wrk2, r8wrk3, lbin, lbinpos, cwk(iper))
+        if (nsys > 1) then
+          call this%write_list(iu, 2, f, i1wrk, r8wrk, r8wrk2, r8wrk3, lbin, lbinpos, cwk(iper), &
+            nsys=nsys, nodes=nodes)
+        else
+          call this%write_list(iu, 2, f, i1wrk, r8wrk, r8wrk2, r8wrk3, lbin, lbinpos, cwk(iper))
+        end if
       end if
       call clear_wrk()
     end do 
@@ -3697,8 +3888,8 @@ module mf6_module
     maxbound = 0
     !
     do iper = 1, nper
-      call this%get_array(i_recharge, 0, iper, 1, i1wrk, r8wrk, ib_in=2, toponly_in=.true.)
-      if (gnlay == 2) call this%get_array(i_recharge, 0, iper, 2, i1wrk, r8wrk, ib_in=2, toponly_in=.true.)
+      call this%get_array(i_recharge, 0, iper, 1, 0, i1wrk, r8wrk, ib_in=2, toponly_in=.true.)
+      if (gnlay == 2) call this%get_array(i_recharge, 0, iper, 2, 0, i1wrk, r8wrk, ib_in=2, toponly_in=.true.)
       !
       ! check and filter for zero recharge
       n = 0
@@ -3814,8 +4005,8 @@ module mf6_module
     maxbound = 0
     !
     do iper = 1, nper
-      call this%get_array(i_wel, 1, iper, 1, i1wrk, r8wrk, ib_in=2)
-      call this%get_array(i_wel, 2, iper, 2, i1wrk, r8wrk, ib_in=2)
+      call this%get_array(i_wel, 1, iper, 1, 0, i1wrk, r8wrk, ib_in=2)
+      call this%get_array(i_wel, 2, iper, 2, 0, i1wrk, r8wrk, ib_in=2)
       !
       ! filter for zero flux
       n = 0
