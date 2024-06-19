@@ -2575,7 +2575,8 @@ module mf6_post_module
       !
       if (t < DZERO) exit
       !
-      if (this%lwritesol) then
+      if ((this%lwritesol).and.&
+         (kper >= this%gen%kper_beg).and.(kper <= this%gen%kper_end)) then
         sbb => this%bb
         !
         if (this%lwritemodid) then
