@@ -1,6 +1,6 @@
 program mf6ggmpost
   ! -- modules
-  use utilsmod, only: i4b, mxslen, open_file, logmsg, ta, parse_line, errmsg
+  use utilsmod, only: i4b, mxslen, open_file, logmsg, ta, parse_line, errmsg, fseek_stream
   use mf6_post_module, only: tPostSol, tPostSer, &
     gncol, gnrow, gnlay, gxmin, gymin, gcs, gnsol, &
     sdate, tilebb, top, comment, mask, maskmap, include_sea, &

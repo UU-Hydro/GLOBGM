@@ -618,6 +618,7 @@ program mf6ggm
       md => s%mod(j); mmd => smod(md%lmodid)
       allocate(mmd%isol); mmd%isol = i
       mmd%imod = md%gmodid
+      mmd%write_budget = .false.
       allocate(mmd%modelname); write(mmd%modelname,'(a,i5.5)') 'm', mmd%imod
       allocate(mmd%bb); mbb => mmd%bb
       allocate(mmd%nreg); mmd%nreg = md%nreg

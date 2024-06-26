@@ -5,7 +5,7 @@ module mf6_post_module
   use utilsmod, only: IZERO, DZERO, DONE, tBB, errmsg, logmsg, swap_slash, open_file, chkexist, &
     get_jd, get_ymd_from_jd, ta, writeasc, writeidf, replacetoken, linear_regression, &
     tTimeSeries, parse_line, insert_tab, create_dir, change_case, count_dir_files, bb_overlap, &
-    quicksort_d
+    quicksort_d, fseek_stream
   use pcrModule, only: tmap
   use ehdrModule, only: writeflt
   use imod_idf
@@ -18,7 +18,7 @@ module mf6_post_module
   logical, parameter :: include_sea = .true.
   !
   character(len=1), parameter :: comment = '#'
-  real(r8b), parameter :: r8nodata = -9999.D0
+  real(r8b), parameter :: r8nodata = -9999999.D0
   integer(i4b), parameter :: mxslen = 1024
   !
   integer(i4b), parameter :: i_out_idf  = 1
@@ -95,6 +95,7 @@ module mf6_post_module
     type(tBin), dimension(:), pointer     :: bins      => null()
     logical, pointer                      :: year_avg  => null()
     integer(i4b), pointer                 :: year_beg  => null()
+    character(len=mxslen), pointer        :: bdg_label => null()
   end type tGen
   !
   type tPostMod
@@ -104,7 +105,11 @@ module mf6_post_module
     integer(i4b), pointer                 :: iu         => null()
     type(tBB), pointer                    :: bb         => null()
     integer(i4b), pointer                 :: nodes      => null()
+    integer(i4b), pointer                 :: nja        => null()
     integer(i4b), dimension(:,:), pointer :: giliric    => null()
+    integer(i4b), dimension(:), pointer   :: iac        => null()
+    integer(i4b), dimension(:), pointer   :: ia         => null()
+    integer(i4b), dimension(:), pointer   :: ja         => null()
     integer(i4b), pointer                 :: kper_read  => null()
     real(r8b), pointer                    :: totim_read => null()
     real(r8b), dimension(:), pointer      :: top        => null()
@@ -117,8 +122,9 @@ module mf6_post_module
     procedure :: read_nodbin    => mf6_post_mod_read_nodbin
     procedure :: read_top_tiled => mf6_post_mod_read_top_tiled
     procedure :: read_top_mf6   => mf6_post_mod_read_top_mf6
-    procedure :: read           => mf6_post_mod_read
-    procedure :: read_nod       => mf6_post_mod_read_nod
+    procedure :: read_hds       => mf6_post_mod_read_hds
+    procedure :: read_bdg       => mf6_post_mod_read_bdg
+    procedure :: read_nod       => mf6_post_mod_read_hds_nod
     procedure :: calc_slope     => mf6_post_mod_calc_slope
     procedure :: calc_average   => mf6_post_mod_calc_average
     procedure :: calc_iqr       => mf6_post_mod_calc_iqr
@@ -729,7 +735,7 @@ module mf6_post_module
         m => this%mod(i)
         call logmsg('Reading all heads for sub-model '//ta((/i/))// &
           ' for '//ta((/tsm%nts/))//' time-series...')
-        call m%read()
+        call m%read_hds()
         do j = 1, tsm%nts
           ts => this%ts(tsm%tsidx(j))
           allocate(ts%val(gnlay,nper))
@@ -1207,7 +1213,7 @@ module mf6_post_module
     ! --- local
     type(tBb), pointer :: bb => null()
     logical :: lbbonly
-    integer(i4b) :: iu, i, j
+    integer(i4b) :: iu, i, j, nja, ios
     character(len=mxslen) :: f
 ! ------------------------------------------------------------------------------
     if (present(lbbonly_in)) then
@@ -1228,6 +1234,8 @@ module mf6_post_module
     allocate(this%bb); bb => this%bb
     if (associated(this%nodes)) deallocate(this%nodes)
     allocate(this%nodes); this%nodes = 0
+    if (associated(this%nja)) deallocate(this%nja)
+    allocate(this%nja); this%nja = 0
     call open_file(f, iu, 'r', .true.)
     read(iu) bb%ic0, bb%ic1, bb%ir0, bb%ir1
     bb%ncol = bb%ic1 - bb%ic0 + 1; bb%nrow = bb%ir1 - bb%ir0 + 1
@@ -1246,6 +1254,24 @@ module mf6_post_module
     if (associated(this%giliric)) deallocate(this%giliric)
     allocate(this%giliric(3,this%nodes))
     read(iu)((this%giliric(j,i),j=1,3),i=1,this%nodes)
+    !
+    read(unit=iu, iostat=ios) nja
+    if (ios == 0) then
+      this%nja = nja
+      if (associated(this%iac)) deallocate(this%iac)
+      if (associated(this%ia))  deallocate(this%ia)
+      if (associated(this%ja))  deallocate(this%ja)
+      allocate(this%iac(this%nodes), this%ia(this%nodes+1), this%ja(this%nja))
+      read(iu)(this%iac(i),i=1,this%nodes)
+      read(iu)(this%ja(i),i=1,this%nja)
+      !
+      ! create ia from iac
+      this%ia(1) = 1
+      do i = 1, this%nodes
+        this%ia(i+1) = this%ia(i) + this%iac(i)
+      end do
+    end if
+    !
     close(iu)
     !
     return
@@ -1367,7 +1393,7 @@ module mf6_post_module
     return
   end subroutine mf6_post_mod_read_top_mf6
     
-  subroutine mf6_post_mod_read(this)
+  subroutine mf6_post_mod_read_hds(this)
 ! ******************************************************************************
     ! -- arguments
     class(tPostMod) :: this
@@ -1378,7 +1404,7 @@ module mf6_post_module
     real(r8b) :: pertim_in, totim_in
     !
     integer(i8b), parameter :: nbhdr = i4b + i4b + r8b + r8b + 16 + i4b + i4b + i4b
-    logical :: lop, lread_all
+    logical :: lop, lread_all, lskip
     integer(i4b) :: ios, i, kper, kper_beg, kper_end, nper, stat
     integer(i8b) :: ipos
     real(r8b), dimension(:), allocatable :: r8wk
@@ -1394,7 +1420,6 @@ module mf6_post_module
       nper = kper_end - kper_beg + 1
       ipos = (kper_beg - 1)*(nbhdr + r8b*this%nodes) + 1
       write(unit=this%iu, pos=ipos, iostat=stat)
-      inquire(unit=this%iu, pos=ipos)
     else
       lread_all = .false.
       kper_beg = 1
@@ -1408,12 +1433,24 @@ module mf6_post_module
     end if
     !
     kper = 0
+    inquire(unit=this%iu, pos=ipos)
     do kper = kper_beg, kper_end
-      read(unit=this%iu,iostat=ios) kstp_in, kper_in, pertim_in, totim_in, &
+      read(unit=this%iu,iostat=ios,pos=ipos) kstp_in, kper_in, pertim_in, totim_in, &
         text_in, ncol_in, nrow_in, ilay_in
+      ipos = ipos + nbhdr
+      !
+      this%kper_read  = kper_in
+      this%totim_read = totim_in
       !
       if (ios /= 0) then
         this%totim_read = -abs(this%totim_read)
+        return
+      end if
+      !
+      if ((.not.lread_all).and. &
+        ((kper_in < this%gen%kper_beg).or.(kper_in > this%gen%kper_end))) then
+        ipos = ipos + r8b*this%nodes
+        call fseek_stream(this%iu, ipos, 0, ios)
         return
       end if
       !
@@ -1425,9 +1462,6 @@ module mf6_post_module
       if (lread_all .and. (kper_in /= kper)) then
         call errmsg('invalid kper')
       end if
-      !
-      this%kper_read  = kper_in
-      this%totim_read = totim_in
       !
       if (lread_all) then
         if(.not.associated(this%r8buff2d)) then
@@ -1470,9 +1504,9 @@ module mf6_post_module
     end if
     !
     return
-  end subroutine mf6_post_mod_read
+  end subroutine mf6_post_mod_read_hds
   
-  subroutine mf6_post_mod_read_nod(this, nod, r8v1d, lcheck)
+  subroutine mf6_post_mod_read_hds_nod(this, nod, r8v1d, lcheck)
 ! ******************************************************************************
     ! -- arguments
     class(tPostMod) :: this
@@ -1551,7 +1585,177 @@ module mf6_post_module
     !call logmsg('**** end mf6_post_mod_read_nod ****')
     
     return
-  end subroutine mf6_post_mod_read_nod
+  end subroutine mf6_post_mod_read_hds_nod
+  
+  subroutine mf6_post_mod_read_bdg(this)
+! ******************************************************************************
+    ! -- arguments
+    class(tPostMod) :: this
+    ! --- local
+    ! mf6 header:
+    character(len=16) :: text_in 
+    integer(i4b) :: kstp_in, kper_in, ndim1_in, ndim2_in, ndim3_in, imeth_in
+    real(r8b) :: delt_in, pertim_in, totim_in
+    !
+    ! imeth=1:
+    real(r8b), allocatable, dimension(:) :: data_in
+    !
+    ! imeth=6:
+    character(len=16) :: txt1id1_in, txt2id1_in, txt1id2_in, txt2id2_in
+    integer(i4b) :: ndat_in, nlist_in
+    integer(i4b), allocatable, dimension(:) :: id1_in, id2_in
+    real(r8b), allocatable, dimension(:,:) :: data2d_in
+    !
+    character(len=16) :: bdg_label
+    logical :: lop, lfnd_bdg, lskip, lfirst
+    integer(i4b) :: ios, i, j, k, n, kper, nper, stat, ilay, jlay
+    integer(i8b) :: ipos_start, ipos
+    real(r8b) :: totim_beg
+    real(r8b), dimension(:), allocatable :: r8wk
+! ------------------------------------------------------------------------------
+    !
+    inquire(unit=this%iu, opened=lop)
+    if (.not.lop) return
+    !
+    lfirst = .true.
+    lfnd_bdg = .false.
+    lskip = .true.
+    ipos_start = 0
+    totim_beg = DZERO
+    !
+    inquire(unit=this%iu, pos=ipos)
+    do while(.true.)
+      ipos_start = ipos
+      read(unit=this%iu, iostat=ios, pos=ipos) kstp_in, kper_in, text_in, &
+        ndim1_in, ndim2_in, ndim3_in
+      ipos = ipos + i4b + i4b + 16 + i4b + i4b + i4b
+      !
+      if (ios /= 0) then
+        if (.not.lfnd_bdg) then
+          call errmsg('Could not find budget label: '//trim(this%gen%bdg_label))
+        end if
+        call fseek_stream(this%iu, ipos_start, 0, ios)
+        exit
+      end if
+      !
+      if ((lfnd_bdg).and.(kper_in /= this%kper_read)) then
+        call fseek_stream(this%iu, ipos_start, 0, ios)
+        exit
+      end if
+      !
+      read(unit=this%iu,iostat=ios, pos=ipos) imeth_in, delt_in, pertim_in, totim_in
+      ipos = ipos + i4b + r8b + r8b + r8b
+      !
+      if (totim_beg == DZERO) then
+        totim_beg = totim_in
+      end if
+      if (totim_in /= totim_beg) then
+        call errmsg('mf6_post_mod_read_bdg: inconsistent totim.')
+      end if
+      !
+      ! first, check if the budget label is found; else: skip reading
+      if (imeth_in == 1) then
+        if ((trim(adjustl(text_in)) =='FLOW-JA-FACE').and.(this%gen%bdg_label == 'flf')) then
+          lfnd_bdg = .true.
+          lskip    = .false.
+        end if
+      else
+        read(unit=this%iu,iostat=ios, pos=ipos) txt1id1_in; ipos = ipos + 16
+        read(unit=this%iu,iostat=ios, pos=ipos) txt2id1_in; ipos = ipos + 16
+        read(unit=this%iu,iostat=ios, pos=ipos) txt1id2_in; ipos = ipos + 16
+        read(unit=this%iu,iostat=ios, pos=ipos) txt2id2_in; ipos = ipos + 16
+        bdg_label = change_case(txt2id2_in,'l')
+        if (bdg_label == this%gen%bdg_label) then
+          lfnd_bdg = .true.
+          lskip    = .false.
+        end if
+      end if
+      !
+      ! overrule skipping when stress period is not selected for output
+      if ((kper_in < this%gen%kper_beg).or.(kper_in > this%gen%kper_end)) then
+        lfnd_bdg = .true.
+        lskip    = .true.
+        if (lfirst) then
+          this%kper_read  = kper_in
+          this%totim_read = totim_in
+          lfirst = .false.
+        end if
+      end if
+      !
+      ! if not found, skip reading data
+      if (lskip) then
+        if (imeth_in == 1) then
+          n = ndim1_in*ndim2_in*abs(ndim3_in)
+          ipos = ipos + n*r8b
+        else
+          read(unit=this%iu,iostat=ios, pos=ipos) ndat_in;    ipos = ipos + i4b
+          if (ndat_in /= 1) then
+            call errmsg('mf6_post_mod_read_bdg: ndat /= 1')
+          end if 
+          read(unit=this%iu,iostat=ios, pos=ipos) nlist_in;   ipos = ipos + i4b
+          ipos = ipos + nlist_in*i4b + nlist_in*i4b + ndat_in*nlist_in*r8b
+        end if
+        cycle
+      else
+        lskip = .true.
+        this%kper_read  = kper_in
+        this%totim_read = totim_in
+        if (imeth_in == 1) then
+          n = ndim1_in*ndim2_in*abs(ndim3_in)
+          if (allocated(data_in)) deallocate(data_in)
+          allocate(data_in(n))
+          read(unit=this%iu, iostat=ios, pos=ipos) (data_in(i),i=1,n)
+          if (.not.associated(this%r8buff)) then
+            allocate(this%r8buff(this%nodes))
+            this%r8buff = r8nodata
+            do i = 1, this%nodes
+              ilay = abs(this%giliric(1,i))
+              do k = this%ia(i)+1, this%ia(i+1)-1
+                j = this%ja(k)
+                jlay = abs(this%giliric(1,j))
+                if (ilay /= jlay) then
+                  if (this%r8buff(i) == r8nodata) this%r8buff(i) = DZERO
+                  this%r8buff(i) = data_in(k)
+                end if
+              end do
+            end do
+          end if
+          ipos = ipos + n*r8b
+        else ! imeth_in = 6
+          read(unit=this%iu,iostat=ios, pos=ipos) ndat_in;  ipos = ipos + i4b
+          read(unit=this%iu,iostat=ios, pos=ipos) nlist_in; ipos = ipos + i4b
+          !
+          ! cleanup and allocate
+          if (allocated(id1_in))    deallocate(id1_in)
+          if (allocated(id2_in))    deallocate(id2_in)
+          if (allocated(data2d_in)) deallocate(data2d_in)
+          !
+          allocate(id1_in(nlist_in), id2_in(nlist_in), data2d_in(ndat_in,nlist_in))
+          read(unit=this%iu,iostat=ios) ((id1_in(n),id2_in(n),(data2d_in(i,n),i=1,ndat_in)),n=1,nlist_in)
+          ipos = ipos + nlist_in*i4b + nlist_in*i4b + ndat_in*nlist_in*r8b
+          
+          if (.not.associated(this%r8buff)) then
+            allocate(this%r8buff(this%nodes))
+            this%r8buff = r8nodata
+          end if
+          do n = 1, nlist_in
+            i = id1_in(n)
+            if (this%r8buff(i) == r8nodata) this%r8buff(i) = DZERO
+            this%r8buff(i) = this%r8buff(i) + data2d_in(1,n)
+          end do
+        end if
+      end if
+    end do
+    !
+    ! cleanup
+    if (allocated(data_in))   deallocate(data_in)
+    if (allocated(id1_in))    deallocate(id1_in)
+    if (allocated(id2_in))    deallocate(id2_in)
+    if (allocated(data2d_in)) deallocate(data2d_in)
+    if (allocated(r8wk))      deallocate(r8wk)
+    !
+    return
+  end subroutine mf6_post_mod_read_bdg
   
   subroutine mf6_post_mod_calc_slope(this)
 ! ******************************************************************************
@@ -1898,7 +2102,11 @@ module mf6_post_module
     end if
     if (associated(this%bb))         deallocate(this%bb)
     if (associated(this%nodes))      deallocate(this%nodes)
+    if (associated(this%nja))        deallocate(this%nja)
     if (associated(this%giliric))    deallocate(this%giliric)
+    if (associated(this%iac))        deallocate(this%iac)
+    if (associated(this%ia))         deallocate(this%ia)
+    if (associated(this%ja))         deallocate(this%ja)
     if (associated(this%kper_read))  deallocate(this%kper_read)
     if (associated(this%totim_read)) deallocate(this%totim_read)
     if (associated(this%r8buff))     deallocate(this%r8buff)
@@ -1911,7 +2119,11 @@ module mf6_post_module
     this%iu         => null()
     this%bb         => null()
     this%nodes      => null()
+    this%nja        => null()
     this%giliric    => null()
+    this%iac        => null()
+    this%ia         => null()
+    this%ja         => null()
     this%kper_read  => null()
     this%totim_read => null()
     this%r8buff     => null()
@@ -1979,6 +2191,10 @@ module mf6_post_module
     else
       read(sa(9),*) gen%date_end
     end if
+    if (na == 13) then
+      allocate(gen%bdg_label)
+      gen%bdg_label = sa(13)
+    end if
     !
     read(sdate(1:4),*) ys; read(sdate(5:6),*) mns
     read(gen%date_beg(1:4),*) y; read(gen%date_beg(5:6),*) mn
@@ -1988,7 +2204,7 @@ module mf6_post_module
     !
     allocate(gen%year_beg)
     gen%year_beg = ys
-    if (na == 13) then
+    if ((na == 13).and.(gen%itype /= 10)) then
       read(sa(13),*) gen%year_beg
     end if
     !
@@ -2544,7 +2760,11 @@ module mf6_post_module
         m => this%mod(i)
         if (m%iu <= 0) cycle
         lread = .true.
-        call m%read()
+        if (this%gen%itype == 10) then
+          call m%read_bdg()
+        else
+          call m%read_hds()
+        end if
         if ((this%gen%itype == 3).or.(this%gen%itype == 4)) then
           call m%calc_slope()
         end if
@@ -2905,53 +3125,55 @@ module mf6_post_module
     !
     if (.not.associated(gen)) return
     !
-    if (associated(gen%in_dir))   deallocate(gen%in_dir)
-    if (associated(gen%in_postf)) deallocate(gen%in_postf)
-    if (associated(gen%out_dir))  deallocate(gen%out_dir)
-    if (associated(gen%out_pref)) deallocate(gen%out_pref)
-    if (associated(gen%lwritebb)) deallocate(gen%lwritebb)
-    if (associated(gen%gic0))     deallocate(gen%gic0)
-    if (associated(gen%gic1))     deallocate(gen%gic1)
-    if (associated(gen%gir0))     deallocate(gen%gir0)
-    if (associated(gen%gir1))     deallocate(gen%gir1)
-    if (associated(gen%il_min))   deallocate(gen%il_min)
-    if (associated(gen%il_max))   deallocate(gen%il_max)
-    if (associated(gen%date_beg)) deallocate(gen%date_beg)
-    if (associated(gen%date_end)) deallocate(gen%date_end)
-    if (associated(gen%kper_beg)) deallocate(gen%kper_beg)
-    if (associated(gen%kper_end)) deallocate(gen%kper_end)
-    if (associated(gen%top_tiled))deallocate(gen%top_tiled)
-    if (associated(gen%top_mf6))  deallocate(gen%top_mf6)
-    if (associated(gen%itype))    deallocate(gen%itype)
-    if (associated(gen%i_out))    deallocate(gen%i_out)
-    if (associated(gen%nbin))     deallocate(gen%nbin)
-    if (associated(gen%bins))     deallocate(gen%bins)
-    if (associated(gen%year_avg)) deallocate(gen%year_avg)
-    if (associated(gen%year_beg)) deallocate(gen%year_beg)
+    if (associated(gen%in_dir))    deallocate(gen%in_dir)
+    if (associated(gen%in_postf))  deallocate(gen%in_postf)
+    if (associated(gen%out_dir))   deallocate(gen%out_dir)
+    if (associated(gen%out_pref))  deallocate(gen%out_pref)
+    if (associated(gen%lwritebb))  deallocate(gen%lwritebb)
+    if (associated(gen%gic0))      deallocate(gen%gic0)
+    if (associated(gen%gic1))      deallocate(gen%gic1)
+    if (associated(gen%gir0))      deallocate(gen%gir0)
+    if (associated(gen%gir1))      deallocate(gen%gir1)
+    if (associated(gen%il_min))    deallocate(gen%il_min)
+    if (associated(gen%il_max))    deallocate(gen%il_max)
+    if (associated(gen%date_beg))  deallocate(gen%date_beg)
+    if (associated(gen%date_end))  deallocate(gen%date_end)
+    if (associated(gen%kper_beg))  deallocate(gen%kper_beg)
+    if (associated(gen%kper_end))  deallocate(gen%kper_end)
+    if (associated(gen%top_tiled)) deallocate(gen%top_tiled)
+    if (associated(gen%top_mf6))   deallocate(gen%top_mf6)
+    if (associated(gen%itype))     deallocate(gen%itype)
+    if (associated(gen%i_out))     deallocate(gen%i_out)
+    if (associated(gen%nbin))      deallocate(gen%nbin)
+    if (associated(gen%bins))      deallocate(gen%bins)
+    if (associated(gen%year_avg))  deallocate(gen%year_avg)
+    if (associated(gen%year_beg))  deallocate(gen%year_beg)
+    if (associated(gen%bdg_label)) deallocate(gen%bdg_label)
     !
-    gen%in_dir   => null()
-    gen%in_postf => null()
-    gen%out_dir  => null()
-    gen%out_pref => null()
-    gen%il_min   => null()
-    gen%il_max   => null()
-    gen%lwritebb => null()
-    gen%gic0     => null()
-    gen%gic1     => null()
-    gen%gir0     => null()
-    gen%gir1     => null()
-    gen%date_beg => null()
-    gen%date_end => null()
-    gen%kper_beg => null()
-    gen%kper_end => null()
-    gen%top_tiled=> null()
-    gen%top_mf6  => null()
-    gen%itype    => null()
-    gen%i_out    => null()
-    gen%nbin     => null()
-    gen%bins     => null()
-    gen%year_avg => null()
-    gen%year_beg => null()
+    gen%in_dir    => null()
+    gen%in_postf  => null()
+    gen%out_dir   => null()
+    gen%out_pref  => null()
+    gen%il_min    => null()
+    gen%il_max    => null()
+    gen%lwritebb  => null()
+    gen%gic0      => null()
+    gen%gic1      => null()
+    gen%gir0      => null()
+    gen%gir1      => null()
+    gen%date_beg  => null()
+    gen%date_end  => null()
+    gen%kper_beg  => null()
+    gen%kper_end  => null()
+    gen%top_tiled => null()
+    gen%top_mf6   => null()
+    gen%itype     => null()
+    gen%i_out     => null()
+    gen%nbin      => null()
+    gen%bins      => null()
+    gen%year_avg  => null()
+    gen%year_beg  => null()
+    gen%bdg_label => null()
     !
     return
   end subroutine mf6_post_clean_gen

@@ -45,6 +45,11 @@ module utilsmod
   real(r8b), parameter :: DONE  = 1.D0
   real(r8b), parameter :: DHALF  = 0.5D0
 
+  interface fseek_stream
+    module procedure :: fseek_stream_loc
+  end interface fseek_stream
+  private :: fseek_stream_loc
+  
   interface fillgap
     module procedure :: fillgap_r4
   end interface fillgap
@@ -5165,4 +5170,47 @@ end subroutine addboundary_r
     return
   end subroutine fill_with_nearest_r4
     
+  subroutine fseek_stream_loc(iu, offset, whence, status)
+! ******************************************************************************
+! Move the file pointer.  Patterned after fseek, which is not 
+! supported as part of the fortran standard.  For this subroutine to work
+! the file must have been opened with access='stream' and action='readwrite'.
+! ******************************************************************************
+!
+!    SPECIFICATIONS:
+! ------------------------------------------------------------------------------
+    integer(I4B), intent(in) :: iu
+    integer(I8B), intent(in) :: offset !BINPOS
+    integer(I4B), intent(in) :: whence
+    integer(I4B), intent(inout) :: status
+    integer(I8B) :: ipos !BINPOS
+! ------------------------------------------------------------------------------
+    !
+    inquire(unit=iu, size=ipos)
+    
+    select case(whence)
+    case(0)
+      !
+      ! -- whence = 0, offset is relative to start of file
+      ipos = 0 + offset
+    case(1)
+      !
+      ! -- whence = 1, offset is relative to current pointer position
+      inquire(unit=iu, pos=ipos)
+      ipos = ipos + offset
+    case(2)
+      !
+      ! -- whence = 2, offset is relative to end of file
+      inquire(unit=iu, size=ipos)
+      ipos = ipos + offset
+    end select
+    !
+    ! -- position the file pointer to ipos
+    write(iu, pos=ipos, iostat=status)
+    inquire(unit=iu, pos=ipos)
+    !
+    ! -- return
+    return
+  end subroutine fseek_stream_loc
+  
 end module utilsmod
